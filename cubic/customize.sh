@@ -221,6 +221,10 @@ EOF
 ln -sf ../usr/lib/os-release /etc/os-release
 echo "Migood OS $VERSION \\n \\l" > /etc/issue
 echo "Migood OS $VERSION" > /etc/issue.net
+# Ubuntu's crash reporter (apport): its popup has the Ubuntu logo and sends
+# reports to Ubuntu, not to Migood. Off.
+[ -f /etc/default/apport ] && sed -i 's/^enabled=.*/enabled=0/' /etc/default/apport
+systemctl disable apport.service >/dev/null 2>&1 || true
 # The description some tools show (DISTRIB_ID stays Ubuntu: apt and PPAs need it).
 sed -i "s/^DISTRIB_DESCRIPTION=.*/DISTRIB_DESCRIPTION=\"Migood OS $VERSION (based on Ubuntu 24.04)\"/" /etc/lsb-release
 
@@ -267,6 +271,23 @@ Categories=Game;
 EOF
   install -d /etc/xdg/autostart
   cp /usr/share/applications/migood-games.desktop /etc/xdg/autostart/
+  # Ubuntu 24.04 blocks the sandbox Electron apps use (unprivileged user
+  # namespaces) unless the app has an AppArmor profile that allows it; without
+  # one the app crashed at start (SIGTRAP). Same profile Ubuntu ships for
+  # VS Code, Slack and Discord: no limits, it just allows "userns".
+  cat > /etc/apparmor.d/migood-games <<EOF
+# Lets Migood Games use its sandbox on Ubuntu 24.04 (see customize.sh).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile migood-games $BIN flags=(unconfined) {
+  userns,
+
+  include if exists <local/migood-games>
+}
+EOF
+  apparmor_parser -Q -K /etc/apparmor.d/migood-games 2>/dev/null \
+    || warn "AppArmor profile for Migood Games didn't parse"
 else
   warn "no assets/migood-games-*.tar.gz, desktop app not installed"
 fi
