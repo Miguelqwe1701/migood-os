@@ -78,7 +78,7 @@ say "3/10 Gaming + streaming"
 # steam-installer asks to accept a licence; pre-answer it.
 echo steam steam/question select "I AGREE" | debconf-set-selections
 echo steam steam/license note '' | debconf-set-selections
-try_install steam-installer wine64 gamemode mangohud xdotool \
+try_install steam-installer steam-devices wine64 gamemode mangohud xdotool \
   retroarch flatpak
 if command -v flatpak >/dev/null; then
   flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
