@@ -25,6 +25,12 @@ pushed to `claude/festive-noether-nzd8nt`, which is PR #1 and not merged yet. St
    `work/chroot`. Always unmount them afterwards (`build-iso.sh` does), and don't run
    long tests with them mounted.
 
+## Releases
+
+| Version | Date | ISO size | Notes |
+|---|---|---|---|
+| 0.1.0 | 2026-10-07 | 4.1 GB (3 parts on GitHub, join with `tools/merge-iso.*`) | First build from GitHub Actions (from scratch, ~23 min build). |
+
 ## Decision: Ubuntu + Cubic (not Windows + NTLite)
 
 | | Ubuntu (Cubic) | Windows (NTLite) |
