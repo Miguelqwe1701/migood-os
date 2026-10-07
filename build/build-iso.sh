@@ -79,6 +79,9 @@ else
   fi
 fi
 mounts
+# The build's own DNS, so apt can download. rm first: in an image it is a link
+# to systemd-resolved, and cp would follow that link.
+rm -f "$CH/etc/resolv.conf"
 cp /etc/resolv.conf "$CH/etc/resolv.conf"
 cat > "$CH/etc/apt/sources.list" <<EOF
 deb $MIRROR noble main restricted universe multiverse
@@ -119,6 +122,8 @@ in_chroot update-initramfs -u -k all >/dev/null
 say "4. Pack the ISO"
 remove_host_cas
 rm -f "$CH/usr/sbin/policy-rc.d" "$CH/etc/resolv.conf"
+# Name lookups (DNS) go through systemd-resolved on the finished system.
+ln -s ../run/systemd/resolve/stub-resolv.conf "$CH/etc/resolv.conf"
 in_chroot apt-get clean
 rm -rf "$CH"/tmp/* "$CH"/var/lib/apt/lists/*
 unmounts

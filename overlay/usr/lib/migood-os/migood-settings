@@ -27,7 +27,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from migoodlib import KNOWN, api, servers, test_server, valid_url  # noqa: E402
+from migoodlib import KNOWN, api, diagnose, servers, valid_url  # noqa: E402
 
 CONFIG = "/usr/lib/migood-os/migood-config"
 TOKEN = os.path.expanduser("~/.config/migood/token")
@@ -291,9 +291,9 @@ class Settings(Adw.PreferencesWindow):
         self.conn_status.set_subtitle("Testing…")
 
         def run():
-            ok = test_server(url)
+            why = diagnose(url)
             GLib.idle_add(lambda: self.conn_status.set_subtitle(
-                "✅ Migood answered" if ok else "❌ No answer. This network may block it"))
+                "✅ Migood answered" if why is None else f"❌ {why}"))
         threading.Thread(target=run, daemon=True).start()
 
     def save_server(self):

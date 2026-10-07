@@ -4,9 +4,12 @@ The server list lives in /etc/migood-os/update.conf (SERVERS=...), the same
 file the updater reads. Servers are tried in order: if one is blocked (a
 hotel or school network, Cloudflare's bot check) the next one is used.
 """
+import errno
 import json
 import os
 import re
+import socket
+import ssl
 import urllib.error
 import urllib.request
 
@@ -72,12 +75,46 @@ def api(path, body=None, token=None, only=None, timeout=20):
 
 
 def test_server(url):
-    """True if `url` answers like a Migood server. /api/me says 401 "Not logged in"."""
+    """True if `url` answers like a Migood server."""
+    return diagnose(url) is None
+
+
+def diagnose(url):
+    """None if `url` answers like a Migood server (/api/me says 401 "Not
+    logged in" when signed out), else the reason, in plain words."""
+    req = urllib.request.Request(url.rstrip("/") + "/api/me",
+                                 headers={"User-Agent": "migood-os", "Accept": "application/json"})
     try:
-        api("/api/me", only=url.rstrip("/"), timeout=10)
-        return True
-    except RuntimeError as e:
-        return "logged in" in str(e).lower()
+        with urllib.request.urlopen(req, timeout=10) as r:
+            json.load(r)
+        return None
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None
+        if e.code in BLOCKED:
+            return f"The server or this network blocked it (error {e.code}, often Cloudflare)."
+        return f"Something answered, but not like Migood (error {e.code})."
+    except urllib.error.URLError as e:
+        return _why(e.reason)
+    except (OSError, ValueError) as e:
+        return _why(e)
+
+
+def _why(err):
+    """Turn a network error into something a person can act on."""
+    if isinstance(err, socket.gaierror):
+        return "Can't find the server's name: no internet, or the network's DNS is down."
+    if isinstance(err, ssl.SSLCertVerificationError):
+        return "The secure connection failed. Check this computer's date and time."
+    if isinstance(err, (socket.timeout, TimeoutError)):
+        return "No answer in time: the network is slow or blocks it."
+    if isinstance(err, ConnectionRefusedError):
+        return "The server refused the connection (it may be down)."
+    if isinstance(err, OSError) and err.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH):
+        return "No internet connection."
+    if isinstance(err, ValueError):
+        return "Something answered, but not like Migood."
+    return f"Couldn't connect ({err})."
 
 
 def sign_in(username, password):

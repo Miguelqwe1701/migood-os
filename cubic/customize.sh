@@ -45,6 +45,18 @@ add-apt-repository -y universe >/dev/null
 add-apt-repository -y multiverse >/dev/null
 dpkg --add-architecture i386
 apt-get update -q
+# Name lookups (DNS): NetworkManager hands them to systemd-resolved, which a
+# minimal Ubuntu doesn't include. Without it the OS was online but couldn't
+# find any server by name. Installing it repoints /etc/resolv.conf at itself,
+# so the build's own DNS file is put back for the rest of the build
+# (build/build-iso.sh links it to systemd-resolved at the end).
+cp -L /etc/resolv.conf /tmp/resolv.build 2>/dev/null || true
+try_install systemd-resolved
+systemctl enable systemd-resolved 2>/dev/null || warn "systemd-resolved not enabled"
+if [ -s /tmp/resolv.build ]; then
+  rm -f /etc/resolv.conf && cp /tmp/resolv.build /etc/resolv.conf
+fi
+rm -f /tmp/resolv.build
 
 say "2/10 Desktop pieces (shelf, launcher, phone link)"
 try_install gnome-shell-extension-manager gnome-shell-extension-gsconnect dconf-cli unzip
