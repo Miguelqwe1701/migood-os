@@ -60,6 +60,17 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           sudo --preserve-env=VERSION bash build/build-iso.sh
 
+      - name: Desktop screenshots
+        continue-on-error: true  # nice to have; never blocks the release
+        run: sudo bash build/screenshot.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: docs/screenshots/*.png
+          if-no-files-found: ignore
+
       - name: Split if over GitHub's 2 GB per-file limit
         run: |
           cd out
@@ -88,6 +99,7 @@ jobs:
 
           Check it with the \`.sha256\` file.
           EOF
+          cp docs/screenshots/*.png out/ 2>/dev/null || true
           gh release create "v$VERSION" out/* \
             --title "Migood OS $VERSION" --notes-file notes.md \
             --prerelease --target "$GITHUB_SHA"

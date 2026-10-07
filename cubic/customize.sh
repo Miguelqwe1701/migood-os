@@ -11,13 +11,13 @@
 # only print a warning if they fail; the build keeps going.
 #
 # Settings (put in front of the command, e.g. BROWSER=chromium bash customize.sh):
-#   BROWSER   chrome (default) or chromium
+#   BROWSER   chromium (default) or chrome
 #   VERSION   Migood OS version to stamp (default 0.1.0)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ASSETS="$REPO/assets"
-BROWSER="${BROWSER:-chrome}"
+BROWSER="${BROWSER:-chromium}"
 VERSION="${VERSION:-0.1.0}"
 export DEBIAN_FRONTEND=noninteractive
 
@@ -76,14 +76,23 @@ case "$BROWSER" in
     apt-get update -q && try_install google-chrome-stable
     BROWSER_DESKTOP=google-chrome.desktop ;;
   chromium)
-    # On Ubuntu, chromium is a snap, and snaps can't install inside Cubic.
-    # The snap gets installed on first boot instead (see TODO in docs/PLAN.md).
-    warn "chromium is a snap on Ubuntu; it is not preinstalled by this script"
-    BROWSER_DESKTOP=chromium_chromium.desktop ;;
+    # Ubuntu's own chromium is a snap, and snaps can't install during a build.
+    # The Flathub Chromium is a normal flatpak, so it can be preinstalled.
+    flatpak install -y --noninteractive flathub org.chromium.Chromium \
+      || warn "Chromium (flatpak) not installed"
+    BROWSER_DESKTOP=org.chromium.Chromium.desktop ;;
   *) echo "BROWSER must be chrome or chromium"; exit 1 ;;
 esac
 # Firefox on Ubuntu is a snap stub; drop it so there is one browser.
 apt-get purge -y firefox >/dev/null 2>&1 || true
+# Make it the default for web links for every user.
+install -d /etc/xdg
+cat > /etc/xdg/mimeapps.list <<EOF
+[Default Applications]
+text/html=$BROWSER_DESKTOP
+x-scheme-handler/http=$BROWSER_DESKTOP
+x-scheme-handler/https=$BROWSER_DESKTOP
+EOF
 
 say "6/10 Nunito font"
 install -d /usr/share/fonts/truetype/nunito
@@ -97,11 +106,11 @@ fi
 say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update
-sed -i "s/google-chrome.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
+sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
 install -d /usr/share/migood-os /usr/share/backgrounds/migood
-[ -f "$ASSETS/migood-launcher.svg" ] && cp "$ASSETS/migood-launcher.svg" /usr/share/migood-os/ \
-  || warn "assets/migood-launcher.svg missing (launcher button icon)"
+[ -f "$ASSETS/migood-square.png" ] && cp "$ASSETS/migood-square.png" /usr/share/migood-os/migood-launcher.png \
+  || warn "assets/migood-square.png missing (launcher button icon)"
 [ -f "$ASSETS/wallpaper.png" ] && cp "$ASSETS/wallpaper.png" /usr/share/backgrounds/migood/default.png \
   || warn "assets/wallpaper.png missing (default wallpaper)"
 dconf update
@@ -148,11 +157,14 @@ if [ -n "$APP_TGZ" ]; then
   rm -rf /opt/migood-games && install -d /opt/migood-games
   tar -xzf "$APP_TGZ" -C /opt/migood-games --strip-components=1
   BIN="$(find /opt/migood-games -maxdepth 1 -type f -executable -name 'migood*' | head -1)"
+  # Electron's sandbox helper must be owned by root with the setuid bit.
+  [ -f /opt/migood-games/chrome-sandbox ] && chown root:root /opt/migood-games/chrome-sandbox \
+    && chmod 4755 /opt/migood-games/chrome-sandbox
   cat > /usr/share/applications/migood-games.desktop <<EOF
 [Desktop Entry]
 Name=Migood Games
 Exec=$BIN %U
-Icon=/usr/share/migood-os/migood-launcher.svg
+Icon=/usr/share/migood-os/migood-launcher.png
 Type=Application
 Categories=Game;
 EOF

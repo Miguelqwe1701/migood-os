@@ -24,6 +24,9 @@ sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 | Path | What it does |
 |---|---|
 | `build/build-iso.sh` | Builds the ISO from scratch: debootstrap → install desktop → customize → squashfs → bootable ISO (BIOS + UEFI). This replaces clicking through Cubic. |
+| `build/screenshot.sh` | Starts the built desktop on a virtual screen and saves screenshots to `docs/screenshots/`. |
+| `build/fetch-assets.sh` | Downloads the newest Migood Games Linux app from the site. |
+| `build/make-wallpaper.py` | Makes the placeholder wallpaper. |
 | `cubic/customize.sh` | Turns plain Ubuntu into Migood OS: packages, theme, branding, os-release, boot logo, Migood app. It also works by hand inside Cubic. |
 | `overlay/` | Files copied onto the OS as they are (`overlay/etc/x` ends up as `/etc/x`). |
 | `overlay/usr/lib/migood-os/update` | The OTA updater (Python). `check` runs daily, `apply` runs at shutdown, and `checkin` reports to the server. |
@@ -31,15 +34,12 @@ sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 | `assets/` | Images and the Migood desktop app (see below). |
 | `tests/` | Updater tests against a fake Migood server: `python3 -m unittest discover tests` |
 
-## Assets to add
+## Assets
 
-The build still works if these are missing. You just get a warning and the default look.
-
-- `assets/migood-square.png`: boot logo (from `/public/cdn/brand/` on the site)
-- `assets/migood-launcher.svg`: Migood logo for the launcher button
-- `assets/wallpaper.png`: default wallpaper
-- `assets/migood-games-<version>.tar.gz`: the Linux desktop app build
-  (`npm run electron-builder --linux tar.gz`)
+- `assets/migood-square.png`, `assets/migood-logo.png`: from the site's `/cdn/brand/`
+  (boot logo, launcher button, wallpaper wordmark)
+- `assets/wallpaper.png`: placeholder made by `build/make-wallpaper.py`
+- The Migood Games Linux app is downloaded at build time (not stored in git).
 
 Never add Windows files, Ubuntu/Canonical logos, games or ROMs.
 

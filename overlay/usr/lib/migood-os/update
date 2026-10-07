@@ -86,11 +86,12 @@ def set_version(version):
 
 
 def config():
+    """SERVERS in update.conf is a space-separated list, tried in order."""
     c = read_kv(CONF)
-    server = c.get("SERVER", "").rstrip("/")
-    if not server.startswith("https://") and not server.startswith("http://"):
-        sys.exit(f"migood-os-update: set SERVER=https://... in {CONF}")
-    return server, c.get("CHANNEL", "stable")
+    servers = [s.rstrip("/") for s in c.get("SERVERS", c.get("SERVER", "")).split()]
+    if not servers or not all(s.startswith(("https://", "http://")) for s in servers):
+        sys.exit(f"migood-os-update: set SERVERS=https://... in {CONF}")
+    return servers, c.get("CHANNEL", "stable")
 
 
 def token():
@@ -116,15 +117,32 @@ def device_id():
         return dev
 
 
-def request(server, path, data=None, headers=None):
+# Answers that mean "something in the way" (e.g. Cloudflare's bot check),
+# not "the Migood server said no". A 404 is a real answer (not in the Beta),
+# so it does NOT move on to the next server.
+BLOCKED = {403, 429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526}
+
+
+def request(servers, path, data=None, headers=None):
     h = {"Authorization": f"Bearer {token()}", "User-Agent": "migood-os-update"}
     h.update(headers or {})
     body = None
     if data is not None:
         body = json.dumps(data).encode()
         h["Content-Type"] = "application/json"
-    req = urllib.request.Request(server + path, data=body, headers=h)
-    return urllib.request.urlopen(req, timeout=60)
+    last = None
+    for server in servers:
+        req = urllib.request.Request(server + path, data=body, headers=h)
+        try:
+            return urllib.request.urlopen(req, timeout=60)
+        except urllib.error.HTTPError as e:
+            if e.code not in BLOCKED:
+                raise
+            last = e
+        except urllib.error.URLError as e:  # can't connect at all
+            last = e
+        log(f"{server} unreachable ({last}), trying next server")
+    raise last
 
 
 def safe_name(name):
@@ -151,14 +169,14 @@ def sha256_of(path):
 
 # ---------- check: download + verify ----------
 
-def download(server, name, dest):
+def download(servers, name, dest):
     """Download with resume: a leftover .part file continues where it stopped."""
     part = dest + ".part"
     have = os.path.getsize(part) if os.path.exists(part) else 0
     headers = {"Range": f"bytes={have}-"} if have else {}
     path = "/api/os/files/" + urllib.parse.quote(name)
     try:
-        resp = request(server, path, headers=headers)
+        resp = request(servers, path, headers=headers)
     except urllib.error.HTTPError as e:
         if e.code == 416:  # we already have every byte
             return part
@@ -172,10 +190,10 @@ def download(server, name, dest):
 
 
 def cmd_check():
-    server, channel = config()
+    servers, channel = config()
     ver = current_version()
     q = urllib.parse.urlencode({"from": ver, "channel": channel})
-    with request(server, f"/api/os/updates?{q}") as resp:
+    with request(servers, f"/api/os/updates?{q}") as resp:
         releases = releases_from(json.load(resp))
     if not releases:
         log(f"up to date ({ver}, {channel})")
@@ -195,7 +213,7 @@ def cmd_check():
             if os.path.exists(dest) and sha256_of(dest) == f.get("sha256"):
                 continue  # already downloaded and verified
             log(f"downloading {rel['version']}/{name}")
-            part = download(server, name, dest)
+            part = download(servers, name, dest)
             got = sha256_of(part)
             if not f.get("sha256") or got != f["sha256"]:
                 os.remove(part)  # never keep a file that fails the check
@@ -275,9 +293,9 @@ def cmd_apply():
 # ---------- checkin ----------
 
 def cmd_checkin():
-    server, channel = config()
+    servers, channel = config()
     body = {"device": device_id(), "version": current_version(), "channel": channel}
-    with request(server, "/api/os/checkin", data=body):
+    with request(servers, "/api/os/checkin", data=body):
         pass
     log(f"checked in as {body['device']} ({body['version']}, {channel})")
     return 0

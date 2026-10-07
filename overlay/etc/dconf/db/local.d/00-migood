@@ -1,10 +1,13 @@
+# Wallpaper: the placeholder from build/make-wallpaper.py. Guest keeps it;
+# the main user gets real Migood wallpapers later (feature 4).
+#
 # Migood OS desktop defaults. Users can still change these; they are only
 # the starting point. Apply changes with: sudo dconf update
 
 [org/gnome/shell]
 enabled-extensions=['dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
 disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
-favorite-apps=['migood-games.desktop', 'google-chrome.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
+favorite-apps=['migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
 
 [org/gnome/desktop/interface]
 color-scheme='prefer-dark'
@@ -46,5 +49,5 @@ show-showdesktop-button=false
 [org/gnome/shell/extensions/arcmenu]
 menu-layout='Chromebook'
 menu-button-appearance='Icon'
-custom-menu-button-icon='/usr/share/migood-os/migood-launcher.svg'
+custom-menu-button-icon='/usr/share/migood-os/migood-launcher.png'
 menu-button-icon='Custom_Icon'

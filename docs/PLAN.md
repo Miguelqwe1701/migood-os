@@ -97,10 +97,18 @@ POST /api/os/releases (owner) {version,channel,notes,files:[...]}
 4. Publish 0.1.0 as a beta release after the owner says OK.
 5. Work down the feature list.
 
-## Open questions for the owner
+## Owner's answers (2026-10-07)
 
-- Which machine/VM builds the image?
-- Chromium or Google Chrome?
+- Build machine: no desktop needed. `build/build-iso.sh` builds on the command line,
+  and GitHub Actions builds it and publishes to the Releases tab.
+- Browser: **Chromium** (Flathub).
+- Server: `https://www.welltypers.it.com`, with the fallback
+  `https://wth5zs3z-3001.usw3.devtunnels.ms`.
+- Assets come from the site (`/cdn/brand/`). The placeholder wallpaper is the
+  guest wallpaper, and the main user's wallpaper for now.
+- Show screenshots of the desktop during development (`build/screenshot.sh`).
+
+## Still open
+
 - Should the Migood app open full screen as "home" on login?
 - Who are the first testers?
-- What is the server's base URL? It goes in `/etc/migood-os/update.conf`.

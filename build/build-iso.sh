@@ -75,6 +75,7 @@ export FLAVOUR="Migood OS"
 EOF
 
 say "3. Make it Migood OS (cubic/customize.sh)"
+bash "$REPO/build/fetch-assets.sh" || true
 rm -rf "$CH/root/migood-os" && mkdir -p "$CH/root/migood-os"
 cp -r "$REPO/cubic" "$REPO/overlay" "$REPO/assets" "$CH/root/migood-os/"
 in_chroot env VERSION="$VERSION" BROWSER="${BROWSER:-chrome}" \

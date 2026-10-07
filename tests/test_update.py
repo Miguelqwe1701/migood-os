@@ -174,7 +174,7 @@ class UpdaterTest(unittest.TestCase):
         os.makedirs(folder)
         with open(os.path.join(folder, "a.tar.gz.part"), "wb") as f:
             f.write(data[:20_000])  # pretend the last run stopped here
-        part = self.up.download(f"http://127.0.0.1:{self.httpd.server_port}",
+        part = self.up.download([f"http://127.0.0.1:{self.httpd.server_port}"],
                                 "a.tar.gz", os.path.join(folder, "a.tar.gz"))
         self.assertEqual(FakeServer.ranges[-1], "bytes=20000-")
         with open(part, "rb") as f:
@@ -207,6 +207,37 @@ class UpdaterTest(unittest.TestCase):
     def test_up_to_date(self):
         self.assertEqual(self.up.cmd_check(), 0)
         self.assertEqual(self.up.staged_versions(), [])
+
+    def test_falls_back_when_first_server_blocked(self):
+        # A "Cloudflare" that blocks every request with 403.
+        class Blocked(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_error(403)
+            do_POST = do_GET
+        cf = ThreadingHTTPServer(("127.0.0.1", 0), Blocked)
+        threading.Thread(target=cf.serve_forever, daemon=True).start()
+        try:
+            with open(self.conf, "w") as f:
+                f.write(f"SERVERS=http://127.0.0.1:{cf.server_port} "
+                        f"http://127.0.0.1:{self.httpd.server_port}\nCHANNEL=beta\n")
+            self.publish("0.2.0", "a.tar.gz", make_bundle(self.marker))
+            self.assertEqual(self.up.cmd_check(), 0)
+            self.assertEqual(self.up.staged_versions(), ["0.2.0"])
+        finally:
+            cf.shutdown()
+            cf.server_close()
+
+    def test_404_does_not_fall_back(self):
+        # 404 = "not in the Migood Beta"; the answer is real, don't retry elsewhere.
+        with open(os.path.join(self.state, "token"), "w") as f:
+            f.write("wrong-token")
+        with open(self.conf, "w") as f:
+            f.write(f"SERVERS=http://127.0.0.1:{self.httpd.server_port} "
+                    f"http://127.0.0.1:1\nCHANNEL=beta\n")
+        self.assertEqual(self.up.main(["update", "check"]), 1)
 
     def test_version_order(self):
         self.assertLess(self.up.version_key("0.9.0"), self.up.version_key("0.10.0"))
