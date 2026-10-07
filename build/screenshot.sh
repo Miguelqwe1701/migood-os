@@ -24,6 +24,7 @@ apt-get install -y -q xvfb imagemagick xdotool >/dev/null
 XPID=""
 cleanup() {
   chroot "$CH" pkill -u "$U" 2>/dev/null || true
+  chroot "$CH" pkill dbus-daemon 2>/dev/null || true
   sleep 1
   chroot "$CH" userdel -r "$U" >/dev/null 2>&1 || true
   [ -n "$XPID" ] && kill "$XPID" 2>/dev/null || true
@@ -42,19 +43,37 @@ Xvfb "$DPY" -screen 0 "${W}x${H}x24" +extension GLX -nolisten tcp &
 XPID=$!
 sleep 2
 
+# The system message bus: on a real boot systemd starts it; GNOME won't
+# start without it.
+mkdir -p "$CH/run/dbus" && rm -f "$CH/run/dbus/pid"
+chroot "$CH" dbus-daemon --system --fork
+
 # A fresh user, so the screenshots show what a new account really gets.
 chroot "$CH" useradd -m -s /bin/bash "$U" 2>/dev/null || true
 UID_=$(chroot "$CH" id -u "$U")
 chroot "$CH" install -d -o "$U" -m 700 "/run/user/$UID_"
 
 # ubuntu session mode = what you get when logging in on the real OS.
-chroot "$CH" su - "$U" -c "
-  export DISPLAY=$DPY XDG_RUNTIME_DIR=/run/user/$UID_ XDG_SESSION_TYPE=x11 \
-         XDG_CURRENT_DESKTOP=ubuntu:GNOME GNOME_SHELL_SESSION_MODE=ubuntu \
-         LIBGL_ALWAYS_SOFTWARE=1
-  dbus-run-session -- gnome-shell --x11 >/tmp/shell.log 2>&1" &
+# No "su" login here: that would try to start logind (only a real boot has
+# it). Without /run/systemd/seats, GNOME uses its built-in stand-in.
+rm -rf "$CH"/run/systemd/{seats,sessions,users}
+chroot --userspec="$U:$U" "$CH" /usr/bin/env -i HOME="/home/$U" USER="$U" \
+  PATH=/usr/local/bin:/usr/bin:/bin DISPLAY=$DPY \
+  XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share:/usr/share XDG_RUNTIME_DIR=/run/user/$UID_ \
+  XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=ubuntu:GNOME GNOME_SHELL_SESSION_MODE=ubuntu \
+  LIBGL_ALWAYS_SOFTWARE=1 \
+  sh -c "cd && dbus-run-session -- gnome-shell --x11 >/tmp/shell.log 2>&1" &
 
-shot() { DISPLAY=$DPY import -window root "$OUT/$1.png"; echo "saved $OUT/$1.png"; }
+shot() {
+  DISPLAY=$DPY import -window root "$OUT/$1.png"
+  # A plain one-colour picture means GNOME didn't draw anything.
+  if [ "$(convert "$OUT/$1.png" -format '%k' info:)" -le 1 ]; then
+    echo "!! $1 is blank, GNOME didn't start. Log: $(dirname "$CH")/shell.log"
+    cp "$CH/tmp/shell.log" "$(dirname "$CH")/shell.log" 2>/dev/null || true
+    exit 1
+  fi
+  echo "saved $OUT/$1.png"
+}
 click() { DISPLAY=$DPY xdotool mousemove "$1" "$2" click 1; }
 
 echo "waiting for GNOME to start (slow without a graphics card)..."
@@ -69,7 +88,7 @@ shot 2-launcher
 DISPLAY=$DPY xdotool key Escape
 sleep 3
 
-click $((W - 60)) $((H - 24))   # system area, bottom-right of the shelf
+click $((W - 34)) $((H - 24))   # power/network icons, far bottom-right
 sleep 8
 shot 3-quick-settings
 DISPLAY=$DPY xdotool key Escape

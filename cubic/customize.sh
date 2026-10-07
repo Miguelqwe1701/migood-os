@@ -57,12 +57,22 @@ for uuid in dash-to-panel@jderose9.github.com arcmenu@arcmenu.com; do
     && curl -fsSL -o /tmp/ext.zip "https://extensions.gnome.org$url" \
     && rm -rf "/usr/share/gnome-shell/extensions/$uuid" \
     && unzip -q -o /tmp/ext.zip -d "/usr/share/gnome-shell/extensions/$uuid" \
+    && glib-compile-schemas "/usr/share/gnome-shell/extensions/$uuid/schemas" \
     && cp "/usr/share/gnome-shell/extensions/$uuid"/schemas/*.xml /usr/share/glib-2.0/schemas/ \
     && chmod -R a+rX "/usr/share/gnome-shell/extensions/$uuid" \
     && echo "   ok  $uuid" || warn "could not install $uuid"
   rm -f /tmp/ext.zip
 done
 glib-compile-schemas /usr/share/glib-2.0/schemas
+# Dash to Panel shows "has been updated!" when its saved version differs from
+# the installed one; preset it so new users don't get that popup.
+DTP=/usr/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/metadata.json
+if [ -f "$DTP" ]; then
+  install -d /etc/dconf/db/local.d
+  printf '[org/gnome/shell/extensions/dash-to-panel]\nextension-version=%s\n' \
+    "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$DTP")" \
+    > /etc/dconf/db/local.d/01-migood-versions
+fi
 
 say "3/10 Gaming + streaming"
 # steam-installer asks to accept a licence; pre-answer it.

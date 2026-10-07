@@ -43,6 +43,9 @@ dot-style-unfocused='DOTS'
 dot-color-override=true
 dot-color-1='#2ecc71'
 show-activities-button=false
+# Shelf order: Migood button (ArcMenu, in leftBox), apps ... clock, system.
+# GNOME's own app-grid and show-desktop buttons are hidden.
+panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
 
 # Launcher: ArcMenu full-screen grid, Migood logo as the button.
 [org/gnome/shell/extensions/arcmenu]
