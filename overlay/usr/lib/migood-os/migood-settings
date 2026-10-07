@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Migood OS Settings: the Migood parts of Settings (feature 50).
+
+  Connection  which Migood server to use (main, backup, or your own address),
+              with a Test button, for networks that block the main site
+  Unlock      set a PIN for this computer (works offline)
+  Updates     version + opens Migood Updates
+  About       Migood OS version, device id
+Changes that need admin rights go through pkexec + /usr/lib/migood-os/migood-config,
+so GNOME asks for your password first.
+"""
+import os
+import subprocess
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from migoodlib import KNOWN, servers, test_server, valid_url  # noqa: E402
+
+CONFIG = "/usr/lib/migood-os/migood-config"
+CSS = b"""
+@define-color accent_bg_color #2ecc71;
+@define-color accent_color #2ecc71;
+@define-color accent_fg_color #0a0d12;
+window, .background { font-family: Nunito, sans-serif; }
+"""
+
+
+def os_release():
+    out = {}
+    try:
+        with open("/usr/lib/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    out[k] = v.strip('"')
+    except OSError:
+        pass
+    return out
+
+
+class Settings(Adw.PreferencesWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Migood OS Settings",
+                         default_width=640, default_height=720, search_enabled=False)
+        page = Adw.PreferencesPage(title="Migood OS", icon_name="emblem-system-symbolic")
+        self.add(page)
+
+        # --- Connection ---
+        conn = Adw.PreferencesGroup(
+            title="Connection",
+            description="If a network (a hotel, school or public Wi-Fi) blocks Migood, "
+                        "pick another server. The others stay as backups.")
+        names = [n for n, _ in KNOWN] + ["Custom address"]
+        self.choice = Adw.ComboRow(title="Migood server", model=Gtk.StringList.new(names))
+        self.custom = Adw.EntryRow(title="Custom server address (https://…)")
+        cur = servers()[0]
+        urls = [u for _, u in KNOWN]
+        if cur in urls:
+            self.choice.set_selected(urls.index(cur))
+            self.custom.set_visible(False)
+        else:
+            self.choice.set_selected(len(KNOWN))
+            self.custom.set_text(cur)
+        self.choice.connect("notify::selected", lambda *_: self.custom.set_visible(
+            self.choice.get_selected() == len(KNOWN)))
+        self.conn_status = Adw.ActionRow(title="Status", subtitle=f"Using {cur}")
+        test = Gtk.Button(label="Test", valign=Gtk.Align.CENTER)
+        test.connect("clicked", lambda *_: self.test())
+        save = Gtk.Button(label="Save", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        save.connect("clicked", lambda *_: self.save_server())
+        self.conn_status.add_suffix(test)
+        self.conn_status.add_suffix(save)
+        for r in (self.choice, self.custom, self.conn_status):
+            conn.add(r)
+        page.add(conn)
+
+        # --- Unlock (PIN) ---
+        unlock = Adw.PreferencesGroup(
+            title="Unlock",
+            description="Your Migood password already unlocks this computer, even offline. "
+                        "A PIN is a quicker way in. Setting one replaces the password on "
+                        "this computer only, not on Migood Games.")
+        self.pin1 = Adw.PasswordEntryRow(title="New PIN (4 to 12 numbers)")
+        self.pin2 = Adw.PasswordEntryRow(title="Type it again")
+        self.pin_status = Adw.ActionRow(title="")
+        pin_btn = Gtk.Button(label="Set PIN", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        pin_btn.connect("clicked", lambda *_: self.set_pin())
+        self.pin_status.add_suffix(pin_btn)
+        for r in (self.pin1, self.pin2, self.pin_status):
+            unlock.add(r)
+        page.add(unlock)
+
+        # --- Updates + About ---
+        rel = os_release()
+        upd = Adw.PreferencesGroup(title="Updates")
+        row = Adw.ActionRow(title="Migood Updates", subtitle=f"Migood OS {rel.get('VERSION_ID', '?')}",
+                            activatable=True)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.connect("activated", lambda *_: subprocess.Popen(["/usr/lib/migood-os/migood-updates"]))
+        upd.add(row)
+        page.add(upd)
+
+        about = Adw.PreferencesGroup(title="About")
+        about.add(Adw.ActionRow(title="System", subtitle=rel.get("PRETTY_NAME", "Migood OS")))
+        page.add(about)
+
+    def chosen(self):
+        i = self.choice.get_selected()
+        return self.custom.get_text().strip().rstrip("/") if i == len(KNOWN) else KNOWN[i][1]
+
+    def test(self):
+        url = self.chosen()
+        if not valid_url(url):
+            self.conn_status.set_subtitle("That doesn't look like a web address (https://…)")
+            return
+        self.conn_status.set_subtitle("Testing…")
+
+        def run():
+            ok = test_server(url)
+            GLib.idle_add(lambda: self.conn_status.set_subtitle(
+                "✅ Migood answered" if ok else "❌ No answer. This network may block it"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_server(self):
+        url = self.chosen()
+        if not valid_url(url):
+            self.conn_status.set_subtitle("That doesn't look like a web address (https://…)")
+            return
+        order = [url] + [u for _, u in KNOWN if u != url]
+        r = subprocess.run(["pkexec", CONFIG, "servers", *order], capture_output=True, text=True)
+        self.conn_status.set_subtitle(f"Using {url}" if r.returncode == 0 else
+                                      (r.stderr.strip() or "Not saved"))
+
+    def set_pin(self):
+        a, b = self.pin1.get_text(), self.pin2.get_text()
+        if not (a.isdigit() and 4 <= len(a) <= 12):
+            self.pin_status.set_title("A PIN is 4 to 12 numbers.")
+            return
+        if a != b:
+            self.pin_status.set_title("The two PINs don't match.")
+            return
+        r = subprocess.run(["pkexec", CONFIG, "pin"], input=a, capture_output=True, text=True)
+        self.pin1.set_text("")
+        self.pin2.set_text("")
+        self.pin_status.set_title("PIN set. Use it to unlock this computer." if r.returncode == 0
+                                  else (r.stderr.strip() or "PIN not changed"))
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="os.migood.Settings")
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        (self.props.active_window or Settings(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

@@ -57,12 +57,23 @@ chroot "$CH" install -d -o "$U" -m 700 "/run/user/$UID_"
 # No "su" login here: that would try to start logind (only a real boot has
 # it). Without /run/systemd/seats, GNOME uses its built-in stand-in.
 rm -rf "$CH"/run/systemd/{seats,sessions,users}
-chroot --userspec="$U:$U" "$CH" /usr/bin/env -i HOME="/home/$U" USER="$U" \
-  PATH=/usr/local/bin:/usr/bin:/bin DISPLAY=$DPY \
-  XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share:/usr/share XDG_RUNTIME_DIR=/run/user/$UID_ \
-  XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=ubuntu:GNOME GNOME_SHELL_SESSION_MODE=ubuntu \
-  LIBGL_ALWAYS_SOFTWARE=1 \
-  sh -c "cd && dbus-run-session -- gnome-shell --x11 >/tmp/shell.log 2>&1" &
+as_user() {
+  chroot --userspec="$U:$U" "$CH" /usr/bin/env -i HOME="/home/$U" USER="$U" \
+    PATH=/usr/local/bin:/usr/bin:/bin DISPLAY=$DPY \
+    XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share:/usr/share \
+    XDG_RUNTIME_DIR=/run/user/$UID_ XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=ubuntu:GNOME \
+    GNOME_SHELL_SESSION_MODE=ubuntu LIBGL_ALWAYS_SOFTWARE=1 "$@"
+}
+# The session bus address is saved so the apps below join the same session.
+as_user sh -c 'cd && dbus-run-session -- sh -c "echo \$DBUS_SESSION_BUS_ADDRESS > /tmp/bus; exec gnome-shell --x11" >/tmp/shell.log 2>&1' &
+app() {  # app <name> <command...>: open an app, screenshot it, close it
+  local name=$1; shift
+  as_user env DBUS_SESSION_BUS_ADDRESS="$(cat "$CH/tmp/bus")" "$@" >/dev/null 2>&1 &
+  sleep 12
+  shot "$name"
+  chroot "$CH" pkill -u "$U" -f /usr/lib/migood-os/ 2>/dev/null || true
+  sleep 2
+}
 
 shot() {
   DISPLAY=$DPY import -window root "$OUT/$1.png"
@@ -75,22 +86,31 @@ shot() {
   echo "saved $OUT/$1.png"
 }
 click() { DISPLAY=$DPY xdotool mousemove "$1" "$2" click 1; }
+key() { DISPLAY=$DPY xdotool key "$@"; }
 
 echo "waiting for GNOME to start (slow without a graphics card)..."
 sleep 60
-DISPLAY=$DPY xdotool key Escape  # close the overview GNOME opens on login
+key Escape  # close the overview GNOME opens on login
 sleep 5
 shot 1-desktop
 
-click 24 $((H - 24))            # Migood button, bottom-left of the shelf
+key super                        # the Migood button / launcher (ArcMenu hotkey)
 sleep 8
 shot 2-launcher
-DISPLAY=$DPY xdotool key Escape
+key Escape
 sleep 3
 
-click $((W - 34)) $((H - 24))   # power/network icons, far bottom-right
+click $((W - 40)) 14             # status icons, top-right of the top bar
 sleep 8
 shot 3-quick-settings
-DISPLAY=$DPY xdotool key Escape
+key Escape
+sleep 2
+
+# The welcome / setup screens (as on the live USB) and the Migood apps.
+for page in welcome wifi signin tour; do
+  app "4-setup-$page" env MIGOOD_SETUP_PAGE=$page /usr/lib/migood-os/migood-setup --live
+done
+app 5-migood-updates /usr/lib/migood-os/migood-updates
+app 6-migood-settings /usr/lib/migood-os/migood-settings
 
 cp "$CH/tmp/shell.log" "$(dirname "$CH")/shell.log" 2>/dev/null || true

@@ -115,7 +115,8 @@ class UpdaterTest(unittest.TestCase):
         self.conf = os.path.join(self.tmp, "update.conf")
         with open(self.conf, "w") as f:
             f.write(f"SERVER=http://127.0.0.1:{self.httpd.server_port}\nCHANNEL=beta\n")
-        os.environ.update(MIGOOD_CONF=self.conf, MIGOOD_STATE=self.state,
+        self.status = os.path.join(self.tmp, "status.json")
+        os.environ.update(MIGOOD_CONF=self.conf, MIGOOD_STATE=self.state, MIGOOD_STATUS=self.status,
                           MIGOOD_OS_RELEASE=self.osrel, MIGOOD_NO_SNAPSHOT="1")
         self.up = load_updater()
         self.marker = os.path.join(self.tmp, "marker")
@@ -238,6 +239,24 @@ class UpdaterTest(unittest.TestCase):
             f.write(f"SERVERS=http://127.0.0.1:{self.httpd.server_port} "
                     f"http://127.0.0.1:1\nCHANNEL=beta\n")
         self.assertEqual(self.up.main(["update", "check"]), 1)
+
+    def test_status_file_for_the_app(self):
+        self.publish("0.2.0", "a.tar.gz", make_bundle(self.marker))
+        FakeServer.releases[0]["notes"] = "New shelf"
+        self.assertEqual(self.up.main(["update", "check"]), 0)
+        with open(self.status) as f:
+            st = json.load(f)
+        self.assertEqual(st["result"], "ok")
+        self.assertEqual(st["version"], "0.1.0")
+        self.assertEqual(st["staged"], [{"version": "0.2.0", "notes": "New shelf"}])
+        self.assertNotIn(TOKEN, json.dumps(st))  # never leak the token
+
+    def test_status_when_not_in_beta(self):
+        with open(os.path.join(self.state, "token"), "w") as f:
+            f.write("wrong-token")
+        self.up.main(["update", "check"])
+        with open(self.status) as f:
+            self.assertEqual(json.load(f)["result"], "no-access")
 
     def test_version_order(self):
         self.assertLess(self.up.version_key("0.9.0"), self.up.version_key("0.10.0"))

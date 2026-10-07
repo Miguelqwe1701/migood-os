@@ -1,0 +1,14 @@
+# First boot of an installed Migood OS: start the setup (sign in with
+# Migood Games -> that becomes the computer's account). Not on the live USB.
+[Unit]
+Description=Migood OS first-boot setup
+Before=gdm.service display-manager.service
+ConditionPathExists=!/var/lib/migood-os/setup-done
+ConditionKernelCommandLine=!boot=casper
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/create-account --begin
+
+[Install]
+WantedBy=graphical.target

@@ -5,6 +5,9 @@
 #
 #   sudo bash build/build-iso.sh            -> out/migood-os-0.1.0.iso
 #   sudo VERSION=0.2.0 bash build/build-iso.sh
+#   sudo BASE_ISO=old.iso VERSION=0.2.0 bash build/build-iso.sh
+#       -> starts from an existing Migood OS ISO and only applies the changes
+#          (like Cubic does). Much faster than building Ubuntu from scratch.
 #
 # What it does, the same as Cubic does under the hood:
 #   1. debootstrap: download a minimal Ubuntu 24.04 into work/chroot
@@ -60,10 +63,20 @@ apt-get update -q
 apt-get install -y -q debootstrap squashfs-tools xorriso grub-pc-bin \
   grub-efi-amd64-bin grub-common mtools dosfstools >/dev/null
 
-say "1. Base Ubuntu 24.04 (debootstrap)"
-if [ ! -x "$CH/usr/bin/apt-get" ]; then
-  rm -rf "$CH" && mkdir -p "$CH"
-  debootstrap --arch=amd64 --variant=minbase noble "$CH" "$MIRROR"
+if [ -n "${BASE_ISO:-}" ]; then
+  say "1. Start from $BASE_ISO"
+  unmounts
+  rm -rf "$CH" "$WORK/base.squashfs"
+  xorriso -osirrox on -indev "$BASE_ISO" \
+    -extract /casper/filesystem.squashfs "$WORK/base.squashfs" >/dev/null 2>&1
+  unsquashfs -no-progress -d "$CH" "$WORK/base.squashfs" >/dev/null
+  rm -f "$WORK/base.squashfs"
+else
+  say "1. Base Ubuntu 24.04 (debootstrap)"
+  if [ ! -x "$CH/usr/bin/apt-get" ]; then
+    rm -rf "$CH" && mkdir -p "$CH"
+    debootstrap --arch=amd64 --variant=minbase noble "$CH" "$MIRROR"
+  fi
 fi
 mounts
 cp /etc/resolv.conf "$CH/etc/resolv.conf"

@@ -5,7 +5,7 @@
 # the starting point. Apply changes with: sudo dconf update
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
+enabled-extensions=['migood-shell@migood.os', 'dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
 disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
 favorite-apps=['migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
 
@@ -28,24 +28,33 @@ picture-uri='file:///usr/share/backgrounds/migood/default.png'
 [org/gnome/desktop/wm/preferences]
 button-layout='appmenu:minimize,maximize,close'
 
-# Shelf: Dash to Panel at the bottom, like the Migood app's taskbar.
+# Dock (Googlebook style): Dash to Panel in "dock mode": a short, floating,
+# rounded bar in the middle of the bottom edge. Migood button (ArcMenu) first,
+# then the apps. Clock and status icons live in the top bar instead
+# (GNOME's own, kept by stockgs-keep-top-panel; see migood-shell).
 [org/gnome/shell/extensions/dash-to-panel]
 panel-positions='{"0":"BOTTOM"}'
-panel-sizes='{"0":48}'
+panel-lengths='{"0":-1}'
+panel-anchors='{"0":"MIDDLE"}'
+panel-sizes='{"0":56}'
+panel-top-bottom-margins=10
+panel-side-margins=10
+panel-side-padding=8
+global-border-radius=5
+stockgs-keep-top-panel=true
 appicon-margin=4
-appicon-padding=6
+appicon-padding=8
 trans-use-custom-bg=true
 trans-bg-color='#0a0d12'
 trans-use-custom-opacity=true
 trans-panel-opacity=0.85
-dot-style-focused='METRO'
+dot-style-focused='DOTS'
 dot-style-unfocused='DOTS'
+dot-position='BOTTOM'
 dot-color-override=true
 dot-color-1='#2ecc71'
 show-activities-button=false
-# Shelf order: Migood button (ArcMenu, in leftBox), apps ... clock, system.
-# GNOME's own app-grid and show-desktop buttons are hidden.
-panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
+panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":false,"position":"stackedBR"},{"element":"dateMenu","visible":false,"position":"stackedBR"},{"element":"systemMenu","visible":false,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
 
 # Launcher: ArcMenu full-screen grid, Migood logo as the button.
 [org/gnome/shell/extensions/arcmenu]

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,8 @@ CONF = os.environ.get("MIGOOD_CONF", "/etc/migood-os/update.conf")
 STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
 OS_RELEASE = os.environ.get("MIGOOD_OS_RELEASE", "/usr/lib/os-release")
 NO_SNAPSHOT = os.environ.get("MIGOOD_NO_SNAPSHOT") == "1"
+# Readable by everyone: the Migood Updates app shows this to the user.
+STATUS = os.environ.get("MIGOOD_STATUS", "/var/cache/migood-os/status.json")
 
 
 def log(msg):
@@ -304,16 +307,58 @@ def cmd_checkin():
 COMMANDS = {"check": cmd_check, "apply": cmd_apply, "checkin": cmd_checkin}
 
 
+def write_status(result, message=""):
+    """Save what happened for the Migood Updates app (no secrets in here)."""
+    staged = []
+    for v in staged_versions():
+        try:
+            with open(os.path.join(STATE, "staged", v, "release.json")) as f:
+                staged.append({"version": v, "notes": json.load(f).get("notes", "")})
+        except (OSError, ValueError):
+            staged.append({"version": v, "notes": ""})
+    status = {
+        "version": current_version(),
+        "channel": read_kv(CONF).get("CHANNEL", "stable"),
+        "checked_at": int(time.time()),
+        "result": result,  # ok | error | not-signed-in | no-access
+        "message": message,
+        "staged": staged,
+    }
+    try:
+        os.makedirs(os.path.dirname(STATUS), exist_ok=True)
+        tmp = STATUS + ".new"
+        with open(tmp, "w") as f:
+            json.dump(status, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, STATUS)
+    except OSError as e:
+        log(f"could not save status: {e}")
+
+
 def main(argv):
     if len(argv) != 2 or argv[1] not in COMMANDS:
         print("usage: update check|apply|checkin", file=sys.stderr)
         return 2
+    cmd = argv[1]
     try:
-        return COMMANDS[argv[1]]()
+        code = COMMANDS[cmd]()
+    except SystemExit as e:  # e.g. not signed in yet, or no server set
+        if cmd != "checkin":
+            write_status("not-signed-in" if "token" in str(e.code) else "error", str(e.code))
+        raise
     except urllib.error.HTTPError as e:
         # 404 also means "this account isn't in the migood-os Beta".
         log(f"server said {e.code} for {e.url}")
+        if cmd != "checkin":
+            write_status("no-access" if e.code == 404 else "error", f"server said {e.code}")
         return 1
+    except Exception as e:
+        if cmd != "checkin":
+            write_status("error", str(e))
+        raise
+    if cmd != "checkin":
+        write_status("ok")
+    return code
 
 
 if __name__ == "__main__":

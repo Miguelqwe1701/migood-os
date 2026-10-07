@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Changes Migood OS settings that need admin rights (run through pkexec).
+
+  migood-config servers URL [URL ...]   save which Migood servers to use, in order
+  migood-config pin                     PIN on stdin: becomes the password that
+                                        unlocks THIS account (the one that ran pkexec)
+
+A PIN works offline: it is just this computer's password for your account.
+Your Migood password still signs you in to Migood Games online.
+"""
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/migood-os")
+from migoodlib import CONF, valid_url  # noqa: E402
+
+CONF = os.environ.get("MIGOOD_CONF", CONF)
+
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def set_servers(urls):
+    urls = [u.strip().rstrip("/") for u in urls]
+    if not urls or not all(valid_url(u) for u in urls):
+        fail("Server addresses must look like https://example.com")
+    try:
+        with open(CONF) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    lines = [l for l in lines if not l.startswith(("SERVERS=", "SERVER="))]
+    lines.append("SERVERS=" + " ".join(urls))
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    tmp = CONF + ".new"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, CONF)
+
+
+def set_pin():
+    uid = os.environ.get("PKEXEC_UID")
+    if uid is None:
+        fail("Run through pkexec.")
+    user = pwd.getpwuid(int(uid)).pw_name
+    pin = sys.stdin.read().strip()
+    if not re.fullmatch(r"[0-9]{4,12}", pin):
+        fail("A PIN is 4 to 12 numbers.")
+    subprocess.run(["chpasswd"], input=f"{user}:{pin}", text=True, check=True)
+
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        fail("Must run as root (through pkexec).")
+    args = sys.argv[1:]
+    if args[:1] == ["servers"]:
+        set_servers(args[1:])
+    elif args == ["pin"]:
+        set_pin()
+    else:
+        fail(__doc__)

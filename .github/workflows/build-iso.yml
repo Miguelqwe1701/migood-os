@@ -1,5 +1,9 @@
 # Builds the Migood OS ISO and puts it on the repo's Releases tab.
 #
+# Normally it starts from the newest ISO on the Releases tab and only applies
+# what changed (build-iso.sh BASE_ISO=...), which is much faster. The first
+# build, or "from scratch", builds Ubuntu + everything from nothing.
+#
 # Two ways to start it:
 #   - Actions tab -> "Build Migood OS" -> Run workflow -> type a version
 #   - push a tag:  git tag v0.1.0 && git push origin v0.1.0
@@ -19,6 +23,10 @@ on:
         description: "Publish to the Releases tab"
         type: boolean
         default: true
+      from_scratch:
+        description: "Build from scratch instead of updating the latest release ISO"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
   pull_request:
@@ -54,11 +62,29 @@ jobs:
           sudo docker image prune -af >/dev/null || true
           df -h /
 
+      - name: Get the latest Migood OS ISO to start from
+        if: ${{ !inputs.from_scratch }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then echo "No release yet, building from scratch."; exit 0; fi
+          mkdir -p base && cd base
+          gh release download "$TAG" -p 'migood-os-*.iso' -p 'migood-os-*.iso.part*'
+          if ls *.iso.part* >/dev/null 2>&1; then
+            cat $(ls *.iso.part* | sort) > base.iso && rm *.iso.part*   # join the parts
+          else
+            mv migood-os-*.iso base.iso
+          fi
+          echo "Starting from $TAG"
+          echo "BASE_ISO=$PWD/base.iso" >> "$GITHUB_ENV"
+
       - name: Build ISO
         run: |
           VERSION="${VERSION#v}"   # tag v0.1.0 -> 0.1.0
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          sudo --preserve-env=VERSION bash build/build-iso.sh
+          sudo --preserve-env=VERSION,BASE_ISO bash build/build-iso.sh
+          rm -f base/base.iso
 
       - name: Desktop screenshots
         continue-on-error: true  # nice to have; never blocks the release

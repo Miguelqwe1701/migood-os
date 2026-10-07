@@ -143,8 +143,13 @@ install -d /usr/share/migood-os /usr/share/backgrounds/migood
   || warn "assets/migood-square.png missing (launcher button icon)"
 [ -f "$ASSETS/wallpaper.png" ] && cp "$ASSETS/wallpaper.png" /usr/share/backgrounds/migood/default.png \
   || warn "assets/wallpaper.png missing (default wallpaper)"
+# Ubuntu's Software Updater is replaced by Migood Updates (dpkg excludes are
+# in the overlay; this removes the copies already on disk).
+rm -f /usr/share/applications/update-manager.desktop /etc/xdg/autostart/update-notifier.desktop
+install -d -m 755 /var/cache/migood-os
 dconf update
-systemctl enable migood-os-update.timer migood-os-apply.service
+systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service
+cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 
 say "8/10 Name: Migood OS $VERSION (based on Ubuntu)"
 # Read only the codename ("noble") from Ubuntu's file. A subshell, because the

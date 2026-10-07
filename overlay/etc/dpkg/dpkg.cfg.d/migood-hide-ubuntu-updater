@@ -1,0 +1,5 @@
+# Migood Updates replaces Ubuntu's Software Updater. The packages stay
+# installed (the desktop depends on them), but their menu entry and the
+# "updates available" popup are never put on disk.
+path-exclude=/usr/share/applications/update-manager.desktop
+path-exclude=/etc/xdg/autostart/update-notifier.desktop

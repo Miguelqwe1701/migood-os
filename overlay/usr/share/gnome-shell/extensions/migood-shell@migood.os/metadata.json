@@ -1,0 +1,8 @@
+{
+  "uuid": "migood-shell@migood.os",
+  "name": "Migood Shell",
+  "description": "Migood OS look: Googlebook-style top bar (clock on the left, see-through), no Activities button.",
+  "shell-version": ["46", "47", "48"],
+  "version": 1,
+  "url": "https://github.com/Miguelqwe1701/migood-os"
+}

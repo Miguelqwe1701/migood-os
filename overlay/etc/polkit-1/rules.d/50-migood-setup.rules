@@ -1,0 +1,10 @@
+// The first-boot setup account may create the computer's account and pick
+// the Migood server without a password (there is no admin yet). create-account itself refuses once setup
+// is finished, so this can't be used later.
+polkit.addRule(function (action, subject) {
+    if ((action.id == "os.migood.setup.create-account" ||
+         action.id == "os.migood.config") &&
+        subject.user == "migood-setup" && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

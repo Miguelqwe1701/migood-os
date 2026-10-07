@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome to Migood OS
+Exec=/usr/lib/migood-os/welcome-autostart
+Icon=/usr/share/migood-os/migood-launcher.png
+X-GNOME-Autostart-Phase=Application
+NoDisplay=true
