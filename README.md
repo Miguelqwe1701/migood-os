@@ -23,14 +23,17 @@ sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 
 - **VirtualBox / VMware:** new "Ubuntu (64-bit)" VM, 4 GB+ RAM, 30 GB disk, ISO as the CD.
 - **USB stick:** write the ISO with balenaEtcher or Rufus and boot from it.
-- **GitHub Codespace (Docker):** runs a virtual machine inside Docker and shows the
-  screen in your browser on port 8006. Check `ls /dev/kvm` first, or it will be very slow:
+- **GitHub Codespace (Docker):** open this repo in a Codespace (4+ cores; the
+  `.devcontainer` sets up Docker and the GitHub CLI), then run:
 
   ```bash
-  docker run -it --rm -p 8006:8006 --device=/dev/kvm --device=/dev/net/tun \
-    --cap-add NET_ADMIN -e RAM_SIZE=6G -e CPU_CORES=4 \
-    -v "$PWD/migood-os-0.1.0.iso:/boot.iso" qemux/qemu
+  bash vm/start.sh
   ```
+
+  It downloads the newest ISO from Releases (joining the parts), starts a virtual
+  machine with `vm/docker-compose.yml`, and shows its screen on **port 8006**
+  (Ports tab). The VM's 40 GB disk is kept in `vm/storage/`, so you can install Migood OS
+  and reboot into it. If `/dev/kvm` is missing it still works, but very slowly.
 
 ## What's in here
 
@@ -45,6 +48,7 @@ sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 | `overlay/usr/lib/migood-os/update` | The OTA updater (Python). `check` runs daily, `apply` runs at shutdown, and `checkin` reports to the server. |
 | `overlay/etc/dconf/db/local.d/00-migood` | Desktop defaults: shelf, launcher, dark theme, Nunito. |
 | `assets/` | Images and the Migood desktop app (see below). |
+| `vm/` | Run the ISO in a virtual machine inside Docker (`bash vm/start.sh`). |
 | `tests/` | Updater tests against a fake Migood server: `python3 -m unittest discover tests` |
 
 ## Assets

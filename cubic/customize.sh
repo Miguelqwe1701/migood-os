@@ -149,9 +149,15 @@ install -d /usr/share/migood-os /usr/share/backgrounds/migood
   || warn "assets/migood-square.png missing (launcher button icon)"
 [ -f "$ASSETS/wallpaper.png" ] && cp "$ASSETS/wallpaper.png" /usr/share/backgrounds/migood/default.png \
   || warn "assets/wallpaper.png missing (default wallpaper)"
+# The owner's Migood wallpapers, offered in Settings -> Appearance
+# (list: /usr/share/gnome-background-properties/migood-wallpapers.xml).
+cp "$ASSETS"/wallpapers/*.jpg /usr/share/backgrounds/migood/ 2>/dev/null \
+  || warn "no assets/wallpapers/*.jpg"
 # Ubuntu's Software Updater is replaced by Migood Updates (dpkg excludes are
 # in the overlay; this removes the copies already on disk).
 rm -f /usr/share/applications/update-manager.desktop /etc/xdg/autostart/update-notifier.desktop
+# Calamares' own "Install System" entry: our "Install Migood OS" starts it instead.
+rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \

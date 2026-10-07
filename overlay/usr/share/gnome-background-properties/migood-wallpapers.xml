@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!-- Migood wallpapers in Settings -> Appearance (files in assets/wallpapers/). -->
+<wallpapers>
+  <wallpaper deleted="false"><name>Migood</name><filename>/usr/share/backgrounds/migood/default.png</filename><options>zoom</options></wallpaper>
+  <wallpaper deleted="false"><name>Migood Halloween</name><filename>/usr/share/backgrounds/migood/halloween.jpg</filename><options>zoom</options></wallpaper>
+  <wallpaper deleted="false"><name>Migood Ocean</name><filename>/usr/share/backgrounds/migood/ocean.jpg</filename><options>zoom</options></wallpaper>
+  <wallpaper deleted="false"><name>Migood Night</name><filename>/usr/share/backgrounds/migood/night.jpg</filename><options>zoom</options></wallpaper>
+  <wallpaper deleted="false"><name>Migood Sunset</name><filename>/usr/share/backgrounds/migood/sunset.jpg</filename><options>zoom</options></wallpaper>
+  <wallpaper deleted="false"><name>Migood Aurora</name><filename>/usr/share/backgrounds/migood/aurora.jpg</filename><options>zoom</options></wallpaper>
+</wallpapers>

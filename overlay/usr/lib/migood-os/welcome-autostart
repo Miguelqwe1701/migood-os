@@ -2,13 +2,21 @@
 # Runs at every login (see /etc/xdg/autostart/migood-welcome.desktop) and
 # picks the right screens. --tour quits right away once it has been seen.
 if [ "$(id -un)" = guest ]; then
-  exec notify-send -i /usr/share/migood-os/migood-launcher.png \
+  exec notify-send -i /usr/share/migood-os/migood-button.svg \
     "You're using Migood OS as a Guest" \
     "Everything you do is deleted when you sign out."
 elif [ "$(id -un)" = migood-setup ]; then
   exec /usr/lib/migood-os/migood-setup --oobe     # first boot: sign in = make account
 elif grep -qw 'boot=casper' /proc/cmdline; then
-  exec /usr/lib/migood-os/migood-setup --live     # trying Migood OS from USB
+  # Trying Migood OS from the USB: put "Install Migood OS" on the desktop
+  # (like Ubuntu's live USB) and turn on desktop icons for this session.
+  D="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+  mkdir -p "$D"
+  cp /usr/share/applications/migood-install.desktop "$D/"
+  chmod +x "$D/migood-install.desktop"
+  gio set "$D/migood-install.desktop" metadata::trusted true 2>/dev/null
+  gnome-extensions enable ding@rastersoft.com 2>/dev/null
+  exec /usr/lib/migood-os/migood-setup --live     # welcome: Try it / Install
 else
   /usr/lib/migood-os/migood-profile-sync &         # name + picture from Migood
   exec /usr/lib/migood-os/migood-setup --tour     # a new account's first login

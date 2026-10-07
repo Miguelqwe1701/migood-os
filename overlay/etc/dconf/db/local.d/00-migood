@@ -63,3 +63,13 @@ menu-layout='chromebook'
 menu-button-appearance='Icon'
 menu-button-icon='/usr/share/migood-os/migood-button.svg'
 menu-button-icon-size=34
+
+# Desktop icons (only switched on in the live USB session, for the
+# "Install Migood OS" icon; see welcome-autostart). No Home/Trash/drives.
+[org/gnome/shell/extensions/ding]
+show-home=false
+show-trash=false
+show-volumes=false
+show-network-volumes=false
+start-corner='top-left'
+icon-size='standard'
