@@ -36,6 +36,11 @@ try_install() {
 [ "$(id -u)" = 0 ] || { echo "run as root (Cubic's terminal already is)"; exit 1; }
 
 say "1/10 Software sources (universe, multiverse, 32-bit for Steam)"
+# Teach Ubuntu's tools that "migood-os" uses Ubuntu's software sources, or
+# add-apt-repository (PPAs) fails with "no distribution template for Migood-os".
+T=/usr/share/python-apt/templates
+[ -f "$T/Ubuntu.info" ] && cp "$T/Ubuntu.info" "$T/Migood-os.info" && cp "$T/Ubuntu.mirrors" "$T/Migood-os.mirrors"
+[ -f /usr/share/distro-info/ubuntu.csv ] && ln -sf ubuntu.csv /usr/share/distro-info/migood-os.csv
 add-apt-repository -y universe >/dev/null
 add-apt-repository -y multiverse >/dev/null
 dpkg --add-architecture i386
