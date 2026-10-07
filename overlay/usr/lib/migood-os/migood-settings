@@ -4,14 +4,21 @@
   Connection  which Migood server to use (main, backup, or your own address),
               with a Test button, for networks that block the main site
   Unlock      set a PIN for this computer (works offline)
-  Updates     version + opens Migood Updates
-  About       Migood OS version, device id
+  Updates     version, stable/beta channel, opens Migood Updates
+  Gaming      FPS + temperature overlay in games (MangoHud)
+  Battery     stop charging at 80% (laptops that support it)
+  Help        send a Migood support ticket, logs attached if you agree
+  Reset       Powerwash: factory reset (feature 40)
+  About       Migood OS version
 Changes that need admin rights go through pkexec + /usr/lib/migood-os/migood-config,
 so GNOME asks for your password first.
 """
 import os
 import subprocess
 import sys
+import glob
+import json
+import platform
 import threading
 
 import gi
@@ -20,9 +27,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from migoodlib import KNOWN, servers, test_server, valid_url  # noqa: E402
+from migoodlib import KNOWN, api, servers, test_server, valid_url  # noqa: E402
 
 CONFIG = "/usr/lib/migood-os/migood-config"
+TOKEN = os.path.expanduser("~/.config/migood/token")
+MANGOHUD = os.path.expanduser("~/.config/environment.d/90-migood-mangohud.conf")
+BATTERIES = glob.glob("/sys/class/power_supply/BAT*/charge_control_end_threshold")
 CSS = b"""
 @define-color accent_bg_color #2ecc71;
 @define-color accent_color #2ecc71;
@@ -104,11 +114,170 @@ class Settings(Adw.PreferencesWindow):
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.connect("activated", lambda *_: subprocess.Popen(["/usr/lib/migood-os/migood-updates"]))
         upd.add(row)
+        self.channel = Adw.ComboRow(title="Update channel",
+                                    subtitle="Beta gets new things first (Migood Beta members)",
+                                    model=Gtk.StringList.new(["Stable", "Beta"]))
+        self.channel.set_selected(1 if self.conf_value("CHANNEL") == "beta" else 0)
+        self.channel.connect("notify::selected", lambda *_: self.save_channel())
+        upd.add(self.channel)
         page.add(upd)
+
+        # --- Gaming ---
+        gaming = Adw.PreferencesGroup(title="Gaming")
+        self.hud = Adw.SwitchRow(title="Show FPS and temperatures in games",
+                                 subtitle="MangoHud overlay. Takes effect next time you sign in.",
+                                 active=os.path.exists(MANGOHUD))
+        self.hud.connect("notify::active", lambda *_: self.set_hud())
+        gaming.add(self.hud)
+        page.add(gaming)
+
+        # --- Battery (only if the laptop supports a charge limit) ---
+        if BATTERIES:
+            bat = Adw.PreferencesGroup(title="Battery")
+            self.limit = Adw.SwitchRow(title="Stop charging at 80%",
+                                       subtitle="Helps the battery last more years",
+                                       active=self.battery_limit_on())
+            self.limit.connect("notify::active", lambda *_: subprocess.run(
+                ["pkexec", CONFIG, "battery-limit", "on" if self.limit.get_active() else "off"]))
+            bat.add(self.limit)
+            page.add(bat)
+
+        # --- Help ---
+        hlp = Adw.PreferencesGroup(title="Help")
+        help_row = Adw.ActionRow(title="Get help", subtitle="Send a message to Migood support",
+                                 activatable=True)
+        help_row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        help_row.connect("activated", lambda *_: self.get_help())
+        hlp.add(help_row)
+        page.add(hlp)
+
+        # --- Reset ---
+        rst = Adw.PreferencesGroup(title="Reset")
+        wash = Adw.ActionRow(title="Powerwash",
+                             subtitle="Erase every account and file on this computer and start over",
+                             activatable=True)
+        wash.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        wash.connect("activated", lambda *_: self.powerwash())
+        rst.add(wash)
+        page.add(rst)
 
         about = Adw.PreferencesGroup(title="About")
         about.add(Adw.ActionRow(title="System", subtitle=rel.get("PRETTY_NAME", "Migood OS")))
         page.add(about)
+
+    def conf_value(self, key):
+        try:
+            with open("/etc/migood-os/update.conf") as f:
+                for line in f:
+                    if line.startswith(key + "="):
+                        return line.strip().split("=", 1)[1]
+        except OSError:
+            pass
+        return ""
+
+    def battery_limit_on(self):
+        try:
+            with open(BATTERIES[0]) as f:
+                return int(f.read().strip()) <= 80
+        except (OSError, ValueError, IndexError):
+            return False
+
+    def save_channel(self):
+        ch = "beta" if self.channel.get_selected() == 1 else "stable"
+        if self.conf_value("CHANNEL") != ch:
+            subprocess.run(["pkexec", CONFIG, "channel", ch])
+
+    def set_hud(self):
+        if self.hud.get_active():
+            os.makedirs(os.path.dirname(MANGOHUD), exist_ok=True)
+            with open(MANGOHUD, "w") as f:
+                f.write("MANGOHUD=1\n")
+        elif os.path.exists(MANGOHUD):
+            os.remove(MANGOHUD)
+
+    def get_help(self):
+        """A support ticket on Migood, like the site's Support page."""
+        win = Adw.Window(transient_for=self, modal=True, default_width=520, default_height=520,
+                         title="Get help")
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18,
+                      margin_bottom=18, margin_start=18, margin_end=18)
+        subject = Gtk.Entry(placeholder_text="What's wrong, in a few words")
+        body = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=8, left_margin=8)
+        body.set_size_request(-1, 200)
+        logs = Gtk.CheckButton(label="Attach system logs (helps Migood fix it faster)", active=True)
+        status = Gtk.Label(wrap=True, css_classes=["dim-label"])
+        send = Gtk.Button(label="Send", css_classes=["suggested-action", "pill"])
+        for w in (subject, Gtk.Frame(child=body), logs, status, send):
+            box.append(w)
+        view.set_content(box)
+        win.set_content(view)
+
+        def do_send(*_):
+            buf = body.get_buffer()
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False).strip()
+            if not subject.get_text().strip() or not text:
+                status.set_label("Add a summary and tell us what is going on.")
+                return
+            if logs.get_active():
+                text += "\n\n--- Migood OS info (attached with permission) ---\n" + self.system_info()
+            try:
+                with open(TOKEN) as f:
+                    token = f.read().strip()
+            except OSError:
+                subprocess.Popen(["/usr/lib/migood-os/migood-open", "support"])
+                status.set_label("Not signed in here, so the Migood support page was opened instead.")
+                return
+            send.set_sensitive(False)
+            status.set_label("Sending…")
+
+            def run():
+                try:
+                    api("/api/support/open", {"subject": subject.get_text().strip()[:120],
+                                              "message": text[:12000], "category": "other"},
+                        token=token)
+                    msg = "Sent! Migood support will answer in your Migood Games messages."
+                except RuntimeError as e:
+                    msg = f"Couldn't send: {e}"
+                GLib.idle_add(lambda: (status.set_label(msg), send.set_sensitive(True)))
+            threading.Thread(target=run, daemon=True).start()
+        send.connect("clicked", do_send)
+        win.present()
+
+    def system_info(self):
+        """Version + recent warnings, so problems can be found. No files or passwords."""
+        rel = os_release()
+        info = [f"System: {rel.get('PRETTY_NAME', '?')}", f"Kernel: {platform.release()}"]
+        try:
+            with open("/var/cache/migood-os/status.json") as f:
+                info.append("Updater: " + json.dumps(json.load(f))[:500])
+        except (OSError, ValueError):
+            pass
+        try:
+            info.append(subprocess.run(
+                ["journalctl", "-b", "-p", "warning", "-n", "120", "--no-pager", "-o", "short"],
+                capture_output=True, text=True, timeout=15).stdout[-8000:])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return "\n".join(info)
+
+    def powerwash(self):
+        dlg = Adw.MessageDialog(
+            transient_for=self, heading="Powerwash this computer?",
+            body="Every account, file, game and setting on this computer will be erased the "
+                 "next time it starts. Your Migood Games account online is not affected. "
+                 "This can't be undone.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("wash", "Powerwash and restart")
+        dlg.set_response_appearance("wash", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def answer(_d, resp):
+            if resp == "wash":
+                if subprocess.run(["pkexec", CONFIG, "powerwash"]).returncode == 0:
+                    subprocess.Popen(["gnome-session-quit", "--reboot"])
+        dlg.connect("response", answer)
+        dlg.present()
 
     def chosen(self):
         i = self.choice.get_selected()

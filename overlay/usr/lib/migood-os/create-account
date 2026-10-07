@@ -103,6 +103,7 @@ def create():
         migood, password, token = data["username"], data["password"], data["token"]
         pin = str(data.get("pin") or "")
         shown = clean_name(data.get("display_name") or migood)
+        junior = data.get("age_band") == "junior"
         pfp = base64.b64decode(data["pfp_png"]) if data.get("pfp_png") else None
     except (ValueError, KeyError):
         fail("Bad request.")
@@ -114,9 +115,12 @@ def create():
         fail(f"There's already an account called {name} on this computer.")
     except KeyError:
         pass
-    # First account = the computer's admin (can install apps, change settings).
+    # The account is the computer's admin (installs apps, changes settings),
+    # except for 12-and-under ("junior") Migood accounts: those get a normal
+    # account, like the site's protections (feature 7).
+    groups = "lpadmin" if junior else "sudo,adm,lpadmin"
     subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", shown,
-                    "-G", "sudo,adm,lpadmin", name], check=True)
+                    "-G", groups, name], check=True)
     subprocess.run(["chpasswd"], input=f"{name}:{pin or password}", text=True, check=True)
     pw = pwd.getpwnam(name)
     # Token for this user's apps, and one for the system updater.
@@ -125,12 +129,37 @@ def create():
     os.chown(os.path.join(pw.pw_dir, ".config"), pw.pw_uid, pw.pw_gid)
     write_private(os.path.join(STATE, "token"), token)
     with open(os.path.join(STATE, "account.json"), "w") as f:
-        json.dump({"local": name, "migood": migood}, f)
+        json.dump({"local": name, "migood": migood, "junior": junior}, f)
     set_picture(name, pfp)
     print(name)
 
 
+def people():
+    """Accounts made for people (not system ones), except the guest account."""
+    return [p for p in pwd.getpwall()
+            if 1000 <= p.pw_uid < 60000 and p.pw_name not in ("guest", "nobody")]
+
+
+def powerwash():
+    """Factory reset (scheduled by `migood-config powerwash`): delete every
+    person's account and files, the Migood sign-in, and pictures."""
+    for p in people():
+        subprocess.run(["userdel", "-r", "-f", p.pw_name], check=False)
+        for d in ("icons", "users"):
+            try:
+                os.remove(os.path.join("/var/lib/AccountsService", d, p.pw_name))
+            except FileNotFoundError:
+                pass
+    for f in ("token", "account.json", "setup-done", "powerwash"):
+        try:
+            os.remove(os.path.join(STATE, f))
+        except FileNotFoundError:
+            pass
+
+
 def begin():
+    if os.path.exists(os.path.join(STATE, "powerwash")):
+        powerwash()
     if os.path.exists(DONE):
         return
     try:

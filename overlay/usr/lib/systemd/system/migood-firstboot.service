@@ -4,6 +4,7 @@
 Description=Migood OS first-boot setup
 Before=gdm.service display-manager.service
 ConditionPathExists=!/var/lib/migood-os/setup-done
+# (Powerwash removes setup-done, so this runs again and does the wipe first.)
 ConditionKernelCommandLine=!boot=casper
 
 [Service]

@@ -130,6 +130,7 @@ cat > /etc/xdg/mimeapps.list <<EOF
 text/html=$BROWSER_DESKTOP
 x-scheme-handler/http=$BROWSER_DESKTOP
 x-scheme-handler/https=$BROWSER_DESKTOP
+x-scheme-handler/mailto=migood-mail.desktop
 EOF
 
 say "6/10 Nunito font"
@@ -153,7 +154,8 @@ install -d /usr/share/migood-os /usr/share/backgrounds/migood
 rm -f /usr/share/applications/update-manager.desktop /etc/xdg/autostart/update-notifier.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
-systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service
+systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
+  migood-battery-limit.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 cp "$ASSETS/migood-button.svg" "$ASSETS/migood-button.png" /usr/share/migood-os/
 B=/usr/share/calamares/branding/migood

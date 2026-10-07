@@ -1,0 +1,13 @@
+# "Stop charging at 80%" (Migood OS Settings). Only works on laptops whose
+# battery supports a charge limit; does nothing otherwise.
+[Unit]
+Description=Migood OS battery charge limit
+ConditionPathExists=/etc/migood-os/battery.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '. /etc/migood-os/battery.conf; for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do [ -w "$f" ] && echo "$LIMIT" > "$f"; done; true'
+
+[Install]
+WantedBy=multi-user.target

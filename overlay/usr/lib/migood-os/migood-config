@@ -4,6 +4,11 @@
   migood-config servers URL [URL ...]   save which Migood servers to use, in order
   migood-config pin                     PIN on stdin: becomes the password that
                                         unlocks THIS account (the one that ran pkexec)
+  migood-config channel stable|beta     which Migood OS updates to get
+  migood-config battery-limit on|off    stop charging at 80% (if the laptop supports it)
+  migood-config powerwash               factory reset at the next start-up: every
+                                        account and its files are deleted, then
+                                        setup runs again (feature 40)
 
 A PIN works offline: it is just this computer's password for your account.
 Your Migood password still signs you in to Migood Games online.
@@ -18,6 +23,8 @@ sys.path.insert(0, "/usr/lib/migood-os")
 from migoodlib import CONF, valid_url  # noqa: E402
 
 CONF = os.environ.get("MIGOOD_CONF", CONF)
+STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
+BATTERY_CONF = os.environ.get("MIGOOD_BATTERY_CONF", "/etc/migood-os/battery.conf")
 
 
 def fail(msg):
@@ -25,23 +32,54 @@ def fail(msg):
     sys.exit(1)
 
 
-def set_servers(urls):
-    urls = [u.strip().rstrip("/") for u in urls]
-    if not urls or not all(valid_url(u) for u in urls):
-        fail("Server addresses must look like https://example.com")
+def set_key(key, value, drop=()):
+    """Set KEY=value in update.conf, keeping every other line (minus `drop` keys)."""
     try:
         with open(CONF) as f:
             lines = f.read().splitlines()
     except FileNotFoundError:
         lines = []
-    lines = [l for l in lines if not l.startswith(("SERVERS=", "SERVER="))]
-    lines.append("SERVERS=" + " ".join(urls))
+    gone = tuple(k + "=" for k in (key, *drop))
+    lines = [l for l in lines if not l.startswith(gone)] + [f"{key}={value}"]
     os.makedirs(os.path.dirname(CONF), exist_ok=True)
     tmp = CONF + ".new"
     with open(tmp, "w") as f:
         f.write("\n".join(lines) + "\n")
     os.chmod(tmp, 0o644)
     os.replace(tmp, CONF)
+
+
+def set_channel(channel):
+    if channel not in ("stable", "beta"):
+        fail("Channel is stable or beta.")
+    set_key("CHANNEL", channel)
+
+
+def battery_limit(state):
+    if state not in ("on", "off"):
+        fail("battery-limit on or off")
+    os.makedirs(os.path.dirname(BATTERY_CONF), exist_ok=True)
+    with open(BATTERY_CONF, "w") as f:
+        f.write(f"LIMIT={'80' if state == 'on' else '100'}\n")
+    subprocess.run(["systemctl", "restart", "migood-battery-limit.service"], check=False)
+
+
+def powerwash():
+    """Only schedules it: the wipe itself runs at the next start-up, before
+    anyone is logged in (create-account --begin)."""
+    os.makedirs(STATE, exist_ok=True)
+    open(os.path.join(STATE, "powerwash"), "w").close()
+    try:
+        os.remove(os.path.join(STATE, "setup-done"))  # so first-boot setup runs again
+    except FileNotFoundError:
+        pass
+
+
+def set_servers(urls):
+    urls = [u.strip().rstrip("/") for u in urls]
+    if not urls or not all(valid_url(u) for u in urls):
+        fail("Server addresses must look like https://example.com")
+    set_key("SERVERS", " ".join(urls), drop=("SERVER",))  # SERVER= was the old key
 
 
 def set_pin():
@@ -63,5 +101,11 @@ if __name__ == "__main__":
         set_servers(args[1:])
     elif args == ["pin"]:
         set_pin()
+    elif len(args) == 2 and args[0] == "channel":
+        set_channel(args[1])
+    elif len(args) == 2 and args[0] == "battery-limit":
+        battery_limit(args[1])
+    elif args == ["powerwash"]:
+        powerwash()
     else:
         fail(__doc__)
