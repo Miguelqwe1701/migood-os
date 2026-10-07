@@ -40,10 +40,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # all history + tags: the update bundle compares versions
       - name: Updater tests
         run: python3 -m unittest discover tests -v
       - name: Script syntax
-        run: bash -n cubic/customize.sh && bash -n build/build-iso.sh
+        run: |
+          bash -n cubic/customize.sh && bash -n build/build-iso.sh
+          bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh
 
   iso:
     needs: test
@@ -54,6 +58,8 @@ jobs:
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # all history + tags: the update bundle compares versions
 
       - name: Make room (runners start with ~20 GB free; the build needs ~25)
         run: |
@@ -88,6 +94,16 @@ jobs:
           # The build ran as root, so out/ belongs to root; the next steps run
           # as the normal runner user and must be able to write there (split).
           sudo chown -R "$(id -u):$(id -g)" out
+
+      - name: Update bundle (for PCs already running the previous version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The newest release that isn't this one = the version PCs update from.
+          PREV="$(gh release list --limit 10 --json tagName -q '.[].tagName' \
+            | grep -vx "v$VERSION" | head -1 || true)"
+          if [ -z "$PREV" ]; then echo "No earlier release, no bundle needed."; exit 0; fi
+          bash tools/make-bundle.sh "$PREV" "$VERSION"
 
       - name: Split if over GitHub's 2 GB per-file limit
         run: |

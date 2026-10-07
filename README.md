@@ -74,3 +74,21 @@ Never add Windows files, Ubuntu/Canonical logos, games or ROMs.
 
 A bundle is a `.tar.gz` with a `debs/` folder (packages to install) and/or an
 `apply.sh` script.
+
+### Making a bundle
+
+GitHub Actions makes one with every release: `migood-os-<version>-update.tar.gz`
+(and its `.sha256`) sits next to the ISO on the Releases tab. It contains only the
+`overlay/` files that changed since the previous release. To make one by hand:
+
+```bash
+git fetch --tags
+bash tools/make-bundle.sh 0.1.0 0.1.1     # -> out/migood-os-0.1.1-update.tar.gz
+```
+
+Changes that aren't overlay files (something `cubic/customize.sh` does, a new
+package) need a hand-written `bundles/<version>/extra.sh`, and/or `.deb` files in
+`bundles/<version>/debs/`. `bundles/0.1.1/extra.sh` is an example.
+
+Then add the release on the Migood server (`POST /api/os/releases`, owner only)
+with the bundle's name, sha256 and size, so PCs see it.
