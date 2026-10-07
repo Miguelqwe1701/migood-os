@@ -1,7 +1,11 @@
 #!/bin/sh
 # Runs at every login (see /etc/xdg/autostart/migood-welcome.desktop) and
 # picks the right screens. --tour quits right away once it has been seen.
-if [ "$(id -un)" = migood-setup ]; then
+if [ "$(id -un)" = guest ]; then
+  exec notify-send -i /usr/share/migood-os/migood-launcher.png \
+    "You're using Migood OS as a Guest" \
+    "Everything you do is deleted when you sign out."
+elif [ "$(id -un)" = migood-setup ]; then
   exec /usr/lib/migood-os/migood-setup --oobe     # first boot: sign in = make account
 elif grep -qw 'boot=casper' /proc/cmdline; then
   exec /usr/lib/migood-os/migood-setup --live     # trying Migood OS from USB

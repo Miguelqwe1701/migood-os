@@ -207,7 +207,7 @@ class Setup(Adw.ApplicationWindow):
         if self.mode == "oobe":
             hint = ("Your Migood Games account becomes this computer's account. "
                     "You'll unlock the computer with the same password.")
-            skip = None
+            skip = self.button("Use as Guest", self.guest)
         else:
             hint = "Sign in to see your games and friends. This is optional while trying Migood OS."
             skip = self.button("Skip", lambda: self.go("tour"))
@@ -274,6 +274,11 @@ class Setup(Adw.ApplicationWindow):
         if self.mode == "oobe":  # save it for the updater and later sign-ins
             subprocess.run(["pkexec", CONFIG, "servers", *order])
         self.server_msg.set_label(f"Using {url}")
+
+    def guest(self):
+        """Browse as Guest now; nothing is saved. Setup returns next start-up."""
+        subprocess.run(["pkexec", HELPER, "--guest-once"])
+        subprocess.Popen(["gnome-session-quit", "--logout", "--no-prompt"])
 
     def do_signin(self):
         username, password = self.user.get_text().strip(), self.password.get_text()

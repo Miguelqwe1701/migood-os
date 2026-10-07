@@ -150,6 +150,11 @@ install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
+# Guest mode: a "guest" account with no password and no admin rights. Its home
+# lives in memory and is wiped at sign-out (guest-session + PAM + logind).
+id guest >/dev/null 2>&1 || useradd -m -s /bin/bash -c "Guest" guest
+passwd -d guest >/dev/null
+pam-auth-update --package --enable migood-guest
 
 say "8/10 Name: Migood OS $VERSION (based on Ubuntu)"
 # Read only the codename ("noble") from Ubuntu's file. A subshell, because the
