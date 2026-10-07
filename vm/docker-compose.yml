@@ -1,0 +1,18 @@
+# Starts the Migood OS VM:   docker compose -f vm/docker-compose.yml up --build
+# Then open port 8006 (Codespaces: the "Ports" tab) to see the screen.
+services:
+  migood-os:
+    build: .
+    container_name: migood-os-vm
+    ports:
+      - "8006:8006"          # the VM's screen, in the browser
+    devices:
+      - /dev/kvm             # makes the VM fast; without it it's very slow
+      - /dev/net/tun         # internet for the VM
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./migood-os.iso:/boot.iso   # the Migood OS ISO (vm/start.sh puts it here)
+      - ./storage:/storage          # the VM's disk: stays between runs, so an install survives
+    stop_grace_period: 2m
+    restart: "no"

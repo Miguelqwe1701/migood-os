@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Migood AI on the desktop: a small chat window (feature 25).
+
+  migood-ai ["question"]   opens the window, asking the question right away
+
+Uses the same Migood AI as the site (/api/ai/chat), with the same rules:
+water limits, age filters for 12-and-under, all decided by the server.
+Conversations from here are private (not saved to your Migood AI history).
+"""
+import os
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from migoodlib import api  # noqa: E402
+
+TOKEN = os.path.expanduser("~/.config/migood/token")
+CSS = b"""
+@define-color accent_bg_color #2ecc71;
+@define-color accent_color #2ecc71;
+@define-color accent_fg_color #0a0d12;
+window, .background { font-family: Nunito, sans-serif; }
+.bubble { border-radius: 18px; padding: 10px 14px; }
+.me { background-color: #2ecc71; color: #0a0d12; }
+.ai { background-color: rgba(255,255,255,0.08); }
+.note { color: #9aa4ad; font-size: 13px; }
+"""
+
+
+def token():
+    try:
+        with open(TOKEN) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+class Chat(Adw.ApplicationWindow):
+    def __init__(self, app, first):
+        super().__init__(application=app, title="Migood AI", default_width=520, default_height=640)
+        self.conversation = []
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        self.water = Gtk.Label(css_classes=["note"])
+        header.pack_end(self.water)
+        view.add_top_bar(header)
+
+        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                            margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.scroll = Gtk.ScrolledWindow(child=self.list, vexpand=True)
+        self.entry = Gtk.Entry(placeholder_text="Ask Migood AI…", hexpand=True)
+        self.entry.connect("activate", lambda *_: self.send())
+        send = Gtk.Button(icon_name="go-up-symbolic", css_classes=["suggested-action", "circular"])
+        send.connect("clicked", lambda *_: self.send())
+        bottom = Gtk.Box(spacing=8, margin_top=8, margin_bottom=12, margin_start=12, margin_end=12)
+        bottom.append(self.entry)
+        bottom.append(send)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(self.scroll)
+        box.append(bottom)
+        view.set_content(box)
+        self.set_content(view)
+
+        if not token():
+            self.bubble("ai", "Sign in with Migood Games to use Migood AI here. "
+                              "(Setup signs you in, or sign in from the Migood Games app.)")
+            self.entry.set_sensitive(False)
+        elif first:
+            self.entry.set_text(first)
+            GLib.idle_add(self.send)
+
+    def bubble(self, who, text):
+        lbl = Gtk.Label(label=text, wrap=True, selectable=True, xalign=0,
+                        css_classes=["bubble", "me" if who == "me" else "ai"],
+                        halign=Gtk.Align.END if who == "me" else Gtk.Align.START)
+        lbl.set_max_width_chars(48)
+        self.list.append(lbl)
+        GLib.idle_add(lambda: self.scroll.get_vadjustment().set_value(
+            self.scroll.get_vadjustment().get_upper()))
+        return lbl
+
+    def send(self):
+        text = self.entry.get_text().strip()
+        if not text:
+            return False
+        self.entry.set_text("")
+        self.bubble("me", text)
+        self.conversation.append({"role": "user", "content": text})
+        thinking = self.bubble("ai", "…")
+
+        def run():
+            try:
+                res = api("/api/ai/chat", {"mode": "normal", "messages": self.conversation,
+                                           "private": True}, token=token(), timeout=90)
+                reply = res.get("reply") or res.get("error") or "No answer."
+                water = (res.get("water"), res.get("waterMax"))
+            except RuntimeError as e:
+                reply, water = str(e), (None, None)
+            def show():
+                thinking.set_label(reply)
+                self.conversation.append({"role": "assistant", "content": reply})
+                if isinstance(water[0], (int, float)) and water[1]:
+                    self.water.set_label(f"💧 {water[0]}/{water[1]}")
+            GLib.idle_add(show)
+        threading.Thread(target=run, daemon=True).start()
+        return False
+
+
+class App(Adw.Application):
+    def __init__(self, first):
+        super().__init__(application_id="os.migood.AI")
+        self.first = first
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        Chat(self, self.first).present()
+
+
+if __name__ == "__main__":
+    first = " ".join(sys.argv[1:]).strip()
+    sys.exit(App(first).run([sys.argv[0]]))

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- C6: app dots, and the top-middle "dot" grows bunny ears (playful, still reads as apps) -->
+  <rect x="16" y="16" width="224" height="224" rx="60" fill="#0a0d12"/>
+  <g fill="#ffffff">
+    <circle cx="80" cy="96" r="18"/><circle cx="176" cy="96" r="18"/>
+    <circle cx="80" cy="144" r="18"/><circle cx="128" cy="144" r="18"/><circle cx="176" cy="144" r="18"/>
+    <circle cx="80" cy="192" r="18"/><circle cx="128" cy="192" r="18"/><circle cx="176" cy="192" r="18"/>
+  </g>
+  <g transform="translate(128 86) scale(0.85)" fill="#2ecc71"><g><ellipse cx="-11" cy="-20" rx="7.5" ry="20" transform="rotate(-12 -11 -20)"/><ellipse cx="11" cy="-20" rx="7.5" ry="20" transform="rotate(12 11 -20)"/><circle cx="0" cy="10" r="20"/></g><g fill="#0a0d12"><circle cx="-7" cy="7" r="2.6"/><circle cx="7" cy="7" r="2.6"/><ellipse cx="0" cy="14" rx="3" ry="2.2"/></g></g>
+</svg>

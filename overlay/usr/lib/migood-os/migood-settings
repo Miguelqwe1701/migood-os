@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Migood OS Settings: the Migood parts of Settings (feature 50).
+
+  Connection  which Migood server to use (main, backup, or your own address),
+              with a Test button, for networks that block the main site
+  Unlock      set a PIN for this computer (works offline)
+  Updates     version, stable/beta channel, opens Migood Updates
+  Gaming      FPS + temperature overlay in games (MangoHud)
+  Battery     stop charging at 80% (laptops that support it)
+  Help        send a Migood support ticket, logs attached if you agree
+  Reset       Powerwash: factory reset (feature 40)
+  About       Migood OS version
+Changes that need admin rights go through pkexec + /usr/lib/migood-os/migood-config,
+so GNOME asks for your password first.
+"""
+import os
+import subprocess
+import sys
+import glob
+import json
+import platform
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from migoodlib import KNOWN, api, servers, test_server, valid_url  # noqa: E402
+
+CONFIG = "/usr/lib/migood-os/migood-config"
+TOKEN = os.path.expanduser("~/.config/migood/token")
+MANGOHUD = os.path.expanduser("~/.config/environment.d/90-migood-mangohud.conf")
+BATTERIES = glob.glob("/sys/class/power_supply/BAT*/charge_control_end_threshold")
+CSS = b"""
+@define-color accent_bg_color #2ecc71;
+@define-color accent_color #2ecc71;
+@define-color accent_fg_color #0a0d12;
+window, .background { font-family: Nunito, sans-serif; }
+"""
+
+
+def os_release():
+    out = {}
+    try:
+        with open("/usr/lib/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    out[k] = v.strip('"')
+    except OSError:
+        pass
+    return out
+
+
+class Settings(Adw.PreferencesWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Migood OS Settings",
+                         default_width=640, default_height=720, search_enabled=False)
+        page = Adw.PreferencesPage(title="Migood OS", icon_name="emblem-system-symbolic")
+        self.add(page)
+
+        # --- Connection ---
+        conn = Adw.PreferencesGroup(
+            title="Connection",
+            description="If a network (a hotel, school or public Wi-Fi) blocks Migood, "
+                        "pick another server. The others stay as backups.")
+        names = [n for n, _ in KNOWN] + ["Custom address"]
+        self.choice = Adw.ComboRow(title="Migood server", model=Gtk.StringList.new(names))
+        self.custom = Adw.EntryRow(title="Custom server address (https://…)")
+        cur = servers()[0]
+        urls = [u for _, u in KNOWN]
+        if cur in urls:
+            self.choice.set_selected(urls.index(cur))
+            self.custom.set_visible(False)
+        else:
+            self.choice.set_selected(len(KNOWN))
+            self.custom.set_text(cur)
+        self.choice.connect("notify::selected", lambda *_: self.custom.set_visible(
+            self.choice.get_selected() == len(KNOWN)))
+        self.conn_status = Adw.ActionRow(title="Status", subtitle=f"Using {cur}")
+        test = Gtk.Button(label="Test", valign=Gtk.Align.CENTER)
+        test.connect("clicked", lambda *_: self.test())
+        save = Gtk.Button(label="Save", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        save.connect("clicked", lambda *_: self.save_server())
+        self.conn_status.add_suffix(test)
+        self.conn_status.add_suffix(save)
+        for r in (self.choice, self.custom, self.conn_status):
+            conn.add(r)
+        page.add(conn)
+
+        # --- Unlock (PIN) ---
+        unlock = Adw.PreferencesGroup(
+            title="Unlock",
+            description="Your Migood password already unlocks this computer, even offline. "
+                        "A PIN is a quicker way in. Setting one replaces the password on "
+                        "this computer only, not on Migood Games.")
+        self.pin1 = Adw.PasswordEntryRow(title="New PIN (4 to 12 numbers)")
+        self.pin2 = Adw.PasswordEntryRow(title="Type it again")
+        self.pin_status = Adw.ActionRow(title="")
+        pin_btn = Gtk.Button(label="Set PIN", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+        pin_btn.connect("clicked", lambda *_: self.set_pin())
+        self.pin_status.add_suffix(pin_btn)
+        for r in (self.pin1, self.pin2, self.pin_status):
+            unlock.add(r)
+        page.add(unlock)
+
+        # --- Updates + About ---
+        rel = os_release()
+        upd = Adw.PreferencesGroup(title="Updates")
+        row = Adw.ActionRow(title="Migood Updates", subtitle=f"Migood OS {rel.get('VERSION_ID', '?')}",
+                            activatable=True)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.connect("activated", lambda *_: subprocess.Popen(["/usr/lib/migood-os/migood-updates"]))
+        upd.add(row)
+        self.channel = Adw.ComboRow(title="Update channel",
+                                    subtitle="Beta gets new things first (Migood Beta members)",
+                                    model=Gtk.StringList.new(["Stable", "Beta"]))
+        self.channel.set_selected(1 if self.conf_value("CHANNEL") == "beta" else 0)
+        self.channel.connect("notify::selected", lambda *_: self.save_channel())
+        upd.add(self.channel)
+        page.add(upd)
+
+        # --- Gaming ---
+        gaming = Adw.PreferencesGroup(title="Gaming")
+        self.hud = Adw.SwitchRow(title="Show FPS and temperatures in games",
+                                 subtitle="MangoHud overlay. Takes effect next time you sign in.",
+                                 active=os.path.exists(MANGOHUD))
+        self.hud.connect("notify::active", lambda *_: self.set_hud())
+        gaming.add(self.hud)
+        page.add(gaming)
+
+        # --- Battery (only if the laptop supports a charge limit) ---
+        if BATTERIES:
+            bat = Adw.PreferencesGroup(title="Battery")
+            self.limit = Adw.SwitchRow(title="Stop charging at 80%",
+                                       subtitle="Helps the battery last more years",
+                                       active=self.battery_limit_on())
+            self.limit.connect("notify::active", lambda *_: subprocess.run(
+                ["pkexec", CONFIG, "battery-limit", "on" if self.limit.get_active() else "off"]))
+            bat.add(self.limit)
+            page.add(bat)
+
+        # --- Help ---
+        hlp = Adw.PreferencesGroup(title="Help")
+        help_row = Adw.ActionRow(title="Get help", subtitle="Send a message to Migood support",
+                                 activatable=True)
+        help_row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        help_row.connect("activated", lambda *_: self.get_help())
+        hlp.add(help_row)
+        page.add(hlp)
+
+        # --- Reset ---
+        rst = Adw.PreferencesGroup(title="Reset")
+        wash = Adw.ActionRow(title="Powerwash",
+                             subtitle="Erase every account and file on this computer and start over",
+                             activatable=True)
+        wash.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        wash.connect("activated", lambda *_: self.powerwash())
+        rst.add(wash)
+        page.add(rst)
+
+        about = Adw.PreferencesGroup(title="About")
+        about.add(Adw.ActionRow(title="System", subtitle=rel.get("PRETTY_NAME", "Migood OS")))
+        page.add(about)
+
+    def conf_value(self, key):
+        try:
+            with open("/etc/migood-os/update.conf") as f:
+                for line in f:
+                    if line.startswith(key + "="):
+                        return line.strip().split("=", 1)[1]
+        except OSError:
+            pass
+        return ""
+
+    def battery_limit_on(self):
+        try:
+            with open(BATTERIES[0]) as f:
+                return int(f.read().strip()) <= 80
+        except (OSError, ValueError, IndexError):
+            return False
+
+    def save_channel(self):
+        ch = "beta" if self.channel.get_selected() == 1 else "stable"
+        if self.conf_value("CHANNEL") != ch:
+            subprocess.run(["pkexec", CONFIG, "channel", ch])
+
+    def set_hud(self):
+        if self.hud.get_active():
+            os.makedirs(os.path.dirname(MANGOHUD), exist_ok=True)
+            with open(MANGOHUD, "w") as f:
+                f.write("MANGOHUD=1\n")
+        elif os.path.exists(MANGOHUD):
+            os.remove(MANGOHUD)
+
+    def get_help(self):
+        """A support ticket on Migood, like the site's Support page."""
+        win = Adw.Window(transient_for=self, modal=True, default_width=520, default_height=520,
+                         title="Get help")
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=18,
+                      margin_bottom=18, margin_start=18, margin_end=18)
+        subject = Gtk.Entry(placeholder_text="What's wrong, in a few words")
+        body = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=8, left_margin=8)
+        body.set_size_request(-1, 200)
+        logs = Gtk.CheckButton(label="Attach system logs (helps Migood fix it faster)", active=True)
+        status = Gtk.Label(wrap=True, css_classes=["dim-label"])
+        send = Gtk.Button(label="Send", css_classes=["suggested-action", "pill"])
+        for w in (subject, Gtk.Frame(child=body), logs, status, send):
+            box.append(w)
+        view.set_content(box)
+        win.set_content(view)
+
+        def do_send(*_):
+            buf = body.get_buffer()
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False).strip()
+            if not subject.get_text().strip() or not text:
+                status.set_label("Add a summary and tell us what is going on.")
+                return
+            if logs.get_active():
+                text += "\n\n--- Migood OS info (attached with permission) ---\n" + self.system_info()
+            try:
+                with open(TOKEN) as f:
+                    token = f.read().strip()
+            except OSError:
+                subprocess.Popen(["/usr/lib/migood-os/migood-open", "support"])
+                status.set_label("Not signed in here, so the Migood support page was opened instead.")
+                return
+            send.set_sensitive(False)
+            status.set_label("Sending…")
+
+            def run():
+                try:
+                    api("/api/support/open", {"subject": subject.get_text().strip()[:120],
+                                              "message": text[:12000], "category": "other"},
+                        token=token)
+                    msg = "Sent! Migood support will answer in your Migood Games messages."
+                except RuntimeError as e:
+                    msg = f"Couldn't send: {e}"
+                GLib.idle_add(lambda: (status.set_label(msg), send.set_sensitive(True)))
+            threading.Thread(target=run, daemon=True).start()
+        send.connect("clicked", do_send)
+        win.present()
+
+    def system_info(self):
+        """Version + recent warnings, so problems can be found. No files or passwords."""
+        rel = os_release()
+        info = [f"System: {rel.get('PRETTY_NAME', '?')}", f"Kernel: {platform.release()}"]
+        try:
+            with open("/var/cache/migood-os/status.json") as f:
+                info.append("Updater: " + json.dumps(json.load(f))[:500])
+        except (OSError, ValueError):
+            pass
+        try:
+            info.append(subprocess.run(
+                ["journalctl", "-b", "-p", "warning", "-n", "120", "--no-pager", "-o", "short"],
+                capture_output=True, text=True, timeout=15).stdout[-8000:])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return "\n".join(info)
+
+    def powerwash(self):
+        dlg = Adw.MessageDialog(
+            transient_for=self, heading="Powerwash this computer?",
+            body="Every account, file, game and setting on this computer will be erased the "
+                 "next time it starts. Your Migood Games account online is not affected. "
+                 "This can't be undone.")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("wash", "Powerwash and restart")
+        dlg.set_response_appearance("wash", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def answer(_d, resp):
+            if resp == "wash":
+                if subprocess.run(["pkexec", CONFIG, "powerwash"]).returncode == 0:
+                    subprocess.Popen(["gnome-session-quit", "--reboot"])
+        dlg.connect("response", answer)
+        dlg.present()
+
+    def chosen(self):
+        i = self.choice.get_selected()
+        return self.custom.get_text().strip().rstrip("/") if i == len(KNOWN) else KNOWN[i][1]
+
+    def test(self):
+        url = self.chosen()
+        if not valid_url(url):
+            self.conn_status.set_subtitle("That doesn't look like a web address (https://…)")
+            return
+        self.conn_status.set_subtitle("Testing…")
+
+        def run():
+            ok = test_server(url)
+            GLib.idle_add(lambda: self.conn_status.set_subtitle(
+                "✅ Migood answered" if ok else "❌ No answer. This network may block it"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_server(self):
+        url = self.chosen()
+        if not valid_url(url):
+            self.conn_status.set_subtitle("That doesn't look like a web address (https://…)")
+            return
+        order = [url] + [u for _, u in KNOWN if u != url]
+        r = subprocess.run(["pkexec", CONFIG, "servers", *order], capture_output=True, text=True)
+        self.conn_status.set_subtitle(f"Using {url}" if r.returncode == 0 else
+                                      (r.stderr.strip() or "Not saved"))
+
+    def set_pin(self):
+        a, b = self.pin1.get_text(), self.pin2.get_text()
+        if not (a.isdigit() and 4 <= len(a) <= 12):
+            self.pin_status.set_title("A PIN is 4 to 12 numbers.")
+            return
+        if a != b:
+            self.pin_status.set_title("The two PINs don't match.")
+            return
+        r = subprocess.run(["pkexec", CONFIG, "pin"], input=a, capture_output=True, text=True)
+        self.pin1.set_text("")
+        self.pin2.set_text("")
+        self.pin_status.set_title("PIN set. Use it to unlock this computer." if r.returncode == 0
+                                  else (r.stderr.strip() or "PIN not changed"))
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="os.migood.Settings")
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        (self.props.active_window or Settings(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

@@ -1,0 +1,35 @@
+# Migood OS look for the installer (Calamares).
+---
+componentName: migood
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 1000px,640px
+windowPlacement: center
+sidebar: widget
+navigation: widget
+
+strings:
+    productName:         "Migood OS"
+    shortProductName:    "Migood OS"
+    version:             "0.1.0"
+    shortVersion:        "0.1"
+    versionedName:       "Migood OS 0.1.0"
+    shortVersionedName:  "Migood OS 0.1"
+    bootloaderEntryName: "Migood OS"
+    productUrl:          "https://www.welltypers.it.com/"
+    supportUrl:          "https://www.welltypers.it.com/homes.html"
+
+images:
+    productLogo:    "migood-button.png"
+    productIcon:    "migood-button.png"
+    productWelcome: "welcome.png"
+
+slideshow: "show.qml"
+slideshowAPI: 2
+
+style:
+    SidebarBackground:        "#0a0d12"
+    SidebarText:              "#ffffff"
+    SidebarTextCurrent:       "#2ecc71"
+    SidebarBackgroundCurrent: "#16202a"

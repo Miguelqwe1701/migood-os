@@ -1,0 +1,4 @@
+/* Migood green buttons, dark everywhere. */
+QWidget { font-family: "Nunito"; }
+QPushButton { border-radius: 14px; padding: 6px 18px; }
+QPushButton:default { background-color: #2ecc71; color: #0a0d12; font-weight: bold; }

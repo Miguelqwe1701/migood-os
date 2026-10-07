@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- C1: app dots, green circle in the middle with a white bunny -->
+  <rect x="16" y="16" width="224" height="224" rx="60" fill="#0a0d12"/>
+  <g fill="#ffffff"><circle cx="80" cy="80" r="15"/><circle cx="128" cy="80" r="15"/><circle cx="176" cy="80" r="15"/><circle cx="80" cy="128" r="15"/><circle cx="176" cy="128" r="15"/><circle cx="80" cy="176" r="15"/><circle cx="128" cy="176" r="15"/><circle cx="176" cy="176" r="15"/></g>
+  <circle cx="128" cy="128" r="25" fill="#2ecc71"/>
+  <g transform="translate(128 131) scale(0.58)" fill="#ffffff"><g><ellipse cx="-11" cy="-20" rx="7.5" ry="20" transform="rotate(-12 -11 -20)"/><ellipse cx="11" cy="-20" rx="7.5" ry="20" transform="rotate(12 11 -20)"/><circle cx="0" cy="10" r="20"/></g></g>
+</svg>

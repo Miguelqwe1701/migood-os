@@ -1,0 +1,26 @@
+#!/bin/sh
+# Guest mode: the guest's home folder lives in memory (RAM) and is thrown
+# away at sign-out, so nothing a guest does is kept.
+# Called by PAM (pam_exec, see /usr/share/pam-configs/migood-guest) when any
+# session opens or closes; does nothing for other users.
+[ "$PAM_USER" = guest ] || exit 0
+HOME_DIR=/home/guest
+
+case "$PAM_TYPE" in
+  open_session)
+    if ! mountpoint -q "$HOME_DIR"; then
+      mkdir -p "$HOME_DIR"
+      mount -t tmpfs -o size=25%,mode=0700 guest-home "$HOME_DIR"
+      cp -a /etc/skel/. "$HOME_DIR"/
+      chown -R guest:guest "$HOME_DIR"
+      chmod 700 "$HOME_DIR"  # cp -a copied /etc/skel's open permissions
+    fi
+    ;;
+  close_session)
+    # logind closes the guest's programs (see migood-guest.conf), then the
+    # in-memory home is dropped and its files are gone.
+    umount -l "$HOME_DIR" 2>/dev/null || true
+    find /tmp /var/tmp -xdev -user guest -delete 2>/dev/null || true
+    ;;
+esac
+exit 0

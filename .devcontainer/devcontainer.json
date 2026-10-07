@@ -1,0 +1,23 @@
+{
+  "name": "Migood OS test machine",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "64gb"
+  },
+  "forwardPorts": [
+    8006
+  ],
+  "portsAttributes": {
+    "8006": {
+      "label": "Migood OS screen",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postAttachCommand": "echo 'Run: bash vm/start.sh   (downloads the ISO and starts the VM on port 8006)'"
+}

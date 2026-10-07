@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Migood Updates: the Migood OS update app (replaces Ubuntu's Software Updater).
+
+It never downloads or installs anything itself. It:
+  - reads /var/cache/migood-os/status.json, which the updater
+    (/usr/lib/migood-os/update) writes after every check
+  - "Check for updates" starts migood-os-update.service (a polkit rule lets
+    the person at the computer do that without a password)
+  - "Restart to install" restarts the PC; staged updates install at shutdown
+Ubuntu's own security fixes keep installing by themselves (unattended-upgrades).
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+STATUS = os.environ.get("MIGOOD_STATUS", "/var/cache/migood-os/status.json")
+LOGO = "/usr/share/migood-os/migood-launcher.png"
+CSS = b"""
+@define-color accent_bg_color #2ecc71;
+@define-color accent_color #2ecc71;
+@define-color accent_fg_color #0a0d12;
+window, .background { font-family: Nunito, sans-serif; }
+.pill-button { border-radius: 999px; padding: 10px 24px; font-weight: 700; }
+.logo { border-radius: 24px; }
+"""
+
+MESSAGES = {
+    "ok": ("You're up to date", "Migood OS checks for updates every day."),
+    "not-signed-in": ("Sign in to get updates",
+                      "Updates come from your Migood account. Sign in during setup."),
+    "no-access": ("Updates aren't open for this account yet",
+                  "Migood OS updates are for Migood Beta members right now."),
+    "error": ("Couldn't check for updates", "Check your internet connection and try again."),
+    None: ("Not checked yet", "Press the button to look for updates."),
+}
+
+
+def read_status():
+    try:
+        with open(STATUS) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def os_version():
+    try:
+        with open("/usr/lib/os-release") as f:
+            for line in f:
+                if line.startswith("VERSION_ID="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return "?"
+
+
+def ago(ts):
+    if not ts:
+        return "never"
+    mins = int((time.time() - ts) // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    if mins < 60 * 24:
+        return f"{mins // 60} h ago"
+    return time.strftime("%b %d", time.localtime(ts))
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Migood Updates",
+                         default_width=560, default_height=640)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        self.set_content(view)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
+        view.set_content(Gtk.ScrolledWindow(child=Adw.Clamp(child=box)))
+
+        if os.path.exists(LOGO):
+            logo = Gtk.Picture.new_for_filename(LOGO)
+            logo.set_size_request(96, 96)
+            logo.set_can_shrink(True)
+            logo.add_css_class("logo")
+            logo.set_halign(Gtk.Align.CENTER)
+            box.append(logo)
+
+        self.title = Gtk.Label(css_classes=["title-1"], wrap=True, justify=Gtk.Justification.CENTER)
+        self.subtitle = Gtk.Label(css_classes=["dim-label"], wrap=True,
+                                  justify=Gtk.Justification.CENTER)
+        box.append(self.title)
+        box.append(self.subtitle)
+
+        self.spinner = Gtk.Spinner(halign=Gtk.Align.CENTER)
+        box.append(self.spinner)
+
+        buttons = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER)
+        self.check_btn = Gtk.Button(label="Check for updates",
+                                    css_classes=["pill-button"])
+        self.check_btn.connect("clicked", self.on_check)
+        self.restart_btn = Gtk.Button(label="Restart to install",
+                                      css_classes=["pill-button", "suggested-action"])
+        self.restart_btn.connect("clicked", self.on_restart)
+        buttons.append(self.check_btn)
+        buttons.append(self.restart_btn)
+        box.append(buttons)
+
+        group = Adw.PreferencesGroup()
+        self.version_row = Adw.ActionRow(title="Migood OS version")
+        self.channel_row = Adw.ActionRow(title="Update channel")
+        self.checked_row = Adw.ActionRow(title="Last checked")
+        sec = Adw.ActionRow(title="Security fixes from Ubuntu",
+                            subtitle="Install automatically in the background")
+        for r in (self.version_row, self.channel_row, self.checked_row, sec):
+            group.add(r)
+        box.append(group)
+
+        self.waiting_since = None
+        self.refresh()
+        GLib.timeout_add_seconds(2, self.tick)
+
+    def refresh(self):
+        st = read_status()
+        staged = st.get("staged") or []
+        if staged:
+            newest = staged[-1]
+            self.title.set_label(f"Migood OS {newest['version']} is ready")
+            self.subtitle.set_label(newest.get("notes") or "Restart your computer to finish installing.")
+        else:
+            title, sub = MESSAGES.get(st.get("result"), MESSAGES["error"])
+            self.title.set_label(title)
+            self.subtitle.set_label(sub)
+        self.restart_btn.set_visible(bool(staged))
+        self.version_row.set_subtitle(os_version())
+        channel = st.get("channel") or "stable"
+        self.channel_row.set_subtitle("Beta (Migood Beta members)" if channel == "beta" else "Stable")
+        self.checked_row.set_subtitle(ago(st.get("checked_at")))
+
+    def tick(self):
+        if self.waiting_since:
+            st = read_status()
+            if st.get("checked_at", 0) >= self.waiting_since or time.time() - self.waiting_since > 300:
+                self.waiting_since = None
+                self.spinner.stop()
+                self.check_btn.set_sensitive(True)
+        self.refresh()
+        return True
+
+    def on_check(self, _btn):
+        self.waiting_since = int(time.time())
+        self.check_btn.set_sensitive(False)
+        self.spinner.start()
+        self.title.set_label("Checking for updates…")
+        self.subtitle.set_label("")
+        try:
+            subprocess.Popen(["systemctl", "start", "--no-block", "migood-os-update.service"])
+        except OSError:
+            self.waiting_since = None
+            self.spinner.stop()
+            self.check_btn.set_sensitive(True)
+
+    def on_restart(self, _btn):
+        # GNOME's own "Restart?" dialog, so open work can be saved first.
+        subprocess.Popen(["gnome-session-quit", "--reboot"])
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="os.migood.Updates")
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+        (self.props.active_window or Window(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

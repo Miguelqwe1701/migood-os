@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Migood OS Settings
+Comment=Migood server, PIN, updates
+Exec=/usr/lib/migood-os/migood-settings
+Icon=/usr/share/migood-os/migood-button.svg
+Type=Application
+Categories=Settings;System;
+Keywords=migood;server;connection;network;hotel;blocked;pin;password;unlock;
+StartupNotify=true

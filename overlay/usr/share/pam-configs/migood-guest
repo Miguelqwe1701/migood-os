@@ -1,0 +1,6 @@
+Name: Migood OS guest mode (home folder in memory, wiped at sign-out)
+Default: yes
+Priority: 300
+Session-Type: Additional
+Session:
+	optional	pam_exec.so /usr/lib/migood-os/guest-session

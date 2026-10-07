@@ -1,0 +1,75 @@
+# Wallpaper: the placeholder from build/make-wallpaper.py. Guest keeps it;
+# the main user gets real Migood wallpapers later (feature 4).
+#
+# Migood OS desktop defaults. Users can still change these; they are only
+# the starting point. Apply changes with: sudo dconf update
+
+[org/gnome/shell]
+enabled-extensions=['migood-shell@migood.os', 'dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
+disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
+favorite-apps=['migood-install.desktop', 'migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Yaru-sage-dark'
+icon-theme='Yaru-sage'
+font-name='Nunito 11'
+document-font-name='Nunito 11'
+clock-format='12h'
+
+[org/gnome/desktop/background]
+picture-uri='file:///usr/share/backgrounds/migood/default.png'
+picture-uri-dark='file:///usr/share/backgrounds/migood/default.png'
+picture-options='zoom'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file:///usr/share/backgrounds/migood/default.png'
+
+[org/gnome/desktop/wm/preferences]
+button-layout='appmenu:minimize,maximize,close'
+
+# Dock (Googlebook style): Dash to Panel in "dock mode": a short, floating,
+# rounded bar in the middle of the bottom edge. Migood button (ArcMenu) first,
+# then the apps. Clock and status icons live in the top bar instead
+# (GNOME's own, kept by stockgs-keep-top-panel; see migood-shell).
+[org/gnome/shell/extensions/dash-to-panel]
+panel-positions='{"0":"BOTTOM"}'
+panel-lengths='{"0":-1}'
+panel-anchors='{"0":"MIDDLE"}'
+panel-sizes='{"0":56}'
+panel-top-bottom-margins=10
+panel-side-margins=10
+panel-side-padding=8
+global-border-radius=5
+stockgs-keep-top-panel=true
+appicon-margin=4
+appicon-padding=8
+trans-use-custom-bg=true
+trans-bg-color='#0a0d12'
+trans-use-custom-opacity=true
+trans-panel-opacity=0.85
+dot-style-focused='DOTS'
+dot-style-unfocused='DOTS'
+dot-position='BOTTOM'
+dot-color-override=true
+dot-color-1='#2ecc71'
+show-activities-button=false
+panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":false,"position":"stackedBR"},{"element":"dateMenu","visible":false,"position":"stackedBR"},{"element":"systemMenu","visible":false,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
+
+# Launcher: ArcMenu, opened by the Migood button (assets/migood-button.svg,
+# "bunny ears" design picked by the owner; options in docs/design/).
+[org/gnome/shell/extensions/arcmenu]
+menu-layout='chromebook'
+menu-button-appearance='Icon'
+menu-button-icon='/usr/share/migood-os/migood-button.svg'
+menu-button-icon-size=34
+
+# Desktop icons (only switched on in the live USB session, for the
+# "Install Migood OS" icon; see welcome-autostart). No Home/Trash/drives.
+[org/gnome/shell/extensions/ding]
+show-home=false
+show-trash=false
+show-volumes=false
+show-network-volumes=false
+start-corner='top-left'
+icon-size='standard'

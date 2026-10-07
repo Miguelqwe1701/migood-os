@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+"""Migood OS setup + intro (like a Chromebook's / Googlebook's first screens).
+
+Modes:
+  migood-setup --oobe   first boot of an installed PC. Signing in with a
+                        Migood Games account CREATES the computer's user
+                        (same username + password). Runs in the setup
+                        session (user "migood-setup"), see setup-session.
+  migood-setup --live   "Try Migood OS" from the USB stick: same screens,
+                        signing in is optional and nothing is saved.
+  migood-setup --tour   only the "what you can do" tour, shown once on a
+                        new user's first login.
+
+Pages: Welcome -> Wi-Fi -> Sign in -> (PIN, first boot only) -> Tour -> Done.
+The sign-in page has "Connection settings" to pick another Migood server, for
+networks (hotels, schools) that block the main one.
+MIGOOD_SETUP_PAGE=<name> opens straight on a page (used for screenshots).
+"""
+import base64
+import json
+import os
+import subprocess
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import migoodlib  # noqa: E402
+from migoodlib import (KNOWN, display_name, fetch_pfp, servers, sign_in,  # noqa: E402
+                       test_server, valid_url)
+
+LOGO = "/usr/share/migood-os/migood-launcher.png"
+WORDMARK = "/usr/share/migood-os/migood-logo.png"
+HELPER = "/usr/lib/migood-os/create-account"
+CONFIG = "/usr/lib/migood-os/migood-config"
+TOUR_DONE = os.path.expanduser("~/.config/migood/tour-done")
+
+CSS = b"""
+@define-color accent_bg_color #2ecc71;
+@define-color accent_color #2ecc71;
+@define-color accent_fg_color #0a0d12;
+@define-color window_bg_color #0d141c;
+window, .background { font-family: Nunito, sans-serif; }
+.setup-bg { background: linear-gradient(160deg, #1d2a36 0%, #0a0d12 70%); }
+.card { background-color: rgba(255,255,255,0.06); border-radius: 28px; padding: 28px; }
+.pill { border-radius: 999px; padding: 12px 28px; font-weight: 800; }
+.big-title { font-size: 30px; font-weight: 800; }
+.tour-icon { font-size: 40px; }
+.tour-card { background-color: rgba(255,255,255,0.06); border-radius: 24px; padding: 18px; }
+.green { color: #2ecc71; }
+entry { border-radius: 14px; min-height: 44px; }
+"""
+
+
+def picture(path, size):
+    """An image exactly `size` pixels tall (Gtk.Picture would grow to fill space)."""
+    if not os.path.exists(path):
+        return Gtk.Box()
+    img = Gtk.Image.new_from_file(path)
+    img.set_pixel_size(size)
+    img.set_halign(Gtk.Align.CENTER)
+    return img
+
+
+def label(text, *classes, wrap=True):
+    l = Gtk.Label(label=text, wrap=wrap, justify=Gtk.Justification.CENTER)
+    for c in classes:
+        l.add_css_class(c)
+    return l
+
+
+class Setup(Adw.ApplicationWindow):
+    def __init__(self, app, mode):
+        super().__init__(application=app, title="Welcome to Migood OS",
+                         default_width=1100, default_height=720)
+        self.mode = mode
+        self.add_css_class("setup-bg")
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT,
+                               transition_duration=350)
+        self.set_content(self.stack)
+
+        if mode == "tour":
+            pages = ["tour", "done"]
+        elif mode == "oobe":
+            pages = ["welcome", "wifi", "signin", "pin", "tour", "done"]
+        else:
+            pages = ["welcome", "wifi", "signin", "tour", "done"]
+        self.order = pages
+        for name in pages:
+            self.stack.add_named(getattr(self, f"page_{name}")(), name)
+        start = os.environ.get("MIGOOD_SETUP_PAGE")
+        self.stack.set_visible_child_name(start if start in pages else pages[0])
+        if mode in ("oobe", "live"):
+            self.fullscreen()
+
+    # ---------- layout helpers ----------
+
+    def frame(self, *children, buttons=()):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER,
+                        halign=Gtk.Align.CENTER, spacing=22)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, css_classes=["card"])
+        card.set_size_request(560, -1)
+        for c in children:
+            card.append(c)
+        if buttons:
+            row = Gtk.Box(spacing=12, halign=Gtk.Align.END, margin_top=8)
+            for b in buttons:
+                row.append(b)
+            card.append(row)
+        outer.append(card)
+        return outer
+
+    def button(self, text, cb, primary=False):
+        b = Gtk.Button(label=text, css_classes=["pill"] + (["suggested-action"] if primary else []))
+        b.connect("clicked", lambda *_: cb())
+        return b
+
+    def go(self, name):
+        if name == "wifi" and self.online():
+            name = "signin"  # already connected (cable or Wi-Fi), skip the step
+        self.stack.set_visible_child_name(name)
+
+    def next_after(self, name):
+        return self.order[self.order.index(name) + 1]
+
+    # ---------- pages ----------
+
+    def page_welcome(self):
+        return self.frame(
+            picture(WORDMARK, 150),
+            label("Welcome to Migood OS", "big-title"),
+            label("Your games, your friends and Migood AI, built into the computer. "
+                  "Let's get you set up. It only takes a minute.", "dim-label"),
+            buttons=([self.button("Install Migood OS", self.install)] if self.mode == "live" else [])
+            + [self.button("Try it" if self.mode == "live" else "Get started",
+                           lambda: self.go("wifi"), primary=True)])
+
+    def install(self):
+        """From the USB: start the installer and close this welcome."""
+        subprocess.Popen(["/usr/lib/migood-os/migood-install"])
+        self.get_application().quit()
+
+    def online(self):
+        try:
+            out = subprocess.run(["nmcli", "-t", "-f", "CONNECTIVITY", "general"],
+                                 capture_output=True, text=True, timeout=5).stdout.strip()
+            return out == "full"
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def page_wifi(self):
+        self.wifi_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.SINGLE)
+        self.wifi_pass = Gtk.PasswordEntry(placeholder_text="Wi-Fi password", show_peek_icon=True)
+        self.wifi_msg = label("", "dim-label")
+        scroller = Gtk.ScrolledWindow(child=self.wifi_list, min_content_height=220)
+        GLib.idle_add(self.scan_wifi)
+        return self.frame(
+            label("Connect to the internet", "big-title"),
+            label("Pick your Wi-Fi network. A network cable works too.", "dim-label"),
+            scroller, self.wifi_pass, self.wifi_msg,
+            buttons=[self.button("Skip", lambda: self.go("signin")),
+                     self.button("Refresh", self.scan_wifi),
+                     self.button("Connect", self.connect_wifi, primary=True)])
+
+    def scan_wifi(self):
+        while (row := self.wifi_list.get_first_child()):
+            self.wifi_list.remove(row)
+        try:
+            out = subprocess.run(["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
+                                 capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        seen = set()
+        for line in out.splitlines():
+            parts = line.replace("\\:", "\u0000").split(":")
+            if len(parts) < 3:
+                continue
+            ssid, signal, sec = (p.replace("\u0000", ":") for p in parts[:3])
+            if not ssid or ssid in seen:
+                continue
+            seen.add(ssid)
+            row = Adw.ActionRow(title=ssid, subtitle=("🔒 " if sec else "") + f"{signal}% signal")
+            row.ssid = ssid
+            self.wifi_list.append(row)
+        if not seen:
+            self.wifi_msg.set_label("No Wi-Fi networks found. Plug in a cable, or press Skip.")
+        return False
+
+    def connect_wifi(self):
+        row = self.wifi_list.get_selected_row()
+        if not row:
+            self.wifi_msg.set_label("Pick a network first.")
+            return
+        cmd = ["nmcli", "dev", "wifi", "connect", row.ssid]
+        if self.wifi_pass.get_text():
+            cmd += ["password", self.wifi_pass.get_text()]
+        self.wifi_msg.set_label(f"Connecting to {row.ssid}…")
+
+        def run():
+            ok = subprocess.run(cmd, capture_output=True, timeout=45).returncode == 0
+            GLib.idle_add(lambda: (self.go("signin") if ok else
+                                   self.wifi_msg.set_label("Couldn't connect. Check the password.")))
+        threading.Thread(target=run, daemon=True).start()
+
+    def page_signin(self):
+        self.user = Gtk.Entry(placeholder_text="Migood username")
+        self.password = Gtk.PasswordEntry(placeholder_text="Password", show_peek_icon=True)
+        self.password.connect("activate", lambda *_: self.do_signin())
+        self.signin_msg = label("", "error")
+        self.signin_btn = self.button("Sign in", self.do_signin, primary=True)
+        if self.mode == "oobe":
+            hint = ("Your Migood Games account becomes this computer's account. "
+                    "You'll unlock the computer with the same password.")
+            skip = self.button("Use as Guest", self.guest)
+        else:
+            hint = "Sign in to see your games and friends. This is optional while trying Migood OS."
+            skip = self.button("Skip", lambda: self.go("tour"))
+        return self.frame(
+            picture(LOGO, 72),
+            label("Sign in with Migood Games", "big-title"),
+            label(hint, "dim-label"),
+            self.user, self.password, self.signin_msg, self.connection_box(),
+            buttons=[b for b in (skip, self.button("Create account", self.create_account),
+                                 self.signin_btn) if b])
+
+    def connection_box(self):
+        """Pick the Migood server, for networks that block the main one."""
+        exp = Gtk.Expander(label="Can't connect? Connection settings")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=8)
+        self.server_choice = Gtk.DropDown.new_from_strings([n for n, _ in KNOWN] + ["Custom address"])
+        self.server_entry = Gtk.Entry(placeholder_text="https://your-server.example", visible=False)
+        self.server_msg = label("", "dim-label")
+        cur = servers()[0]
+        urls = [u for _, u in KNOWN]
+        if cur in urls:
+            self.server_choice.set_selected(urls.index(cur))
+        else:
+            self.server_choice.set_selected(len(KNOWN))
+            self.server_entry.set_text(cur)
+            self.server_entry.set_visible(True)
+        self.server_choice.connect("notify::selected", lambda *_: self.server_entry.set_visible(
+            self.server_choice.get_selected() == len(KNOWN)))
+        row = Gtk.Box(spacing=8)
+        row.append(self.server_choice)
+        row.append(self.button("Test", self.test_chosen_server))
+        row.append(self.button("Use this server", self.use_chosen_server))
+        for w in (row, self.server_entry, self.server_msg):
+            box.append(w)
+        exp.set_child(box)
+        return exp
+
+    def chosen_server(self):
+        i = self.server_choice.get_selected()
+        return self.server_entry.get_text().strip().rstrip("/") if i == len(KNOWN) else KNOWN[i][1]
+
+    def test_chosen_server(self):
+        url = self.chosen_server()
+        if not valid_url(url):
+            self.server_msg.set_label("That doesn't look like a web address (https://…).")
+            return
+        self.server_msg.set_label("Testing…")
+
+        def run():
+            ok = test_server(url)
+            GLib.idle_add(lambda: self.server_msg.set_label(
+                "✅ Migood answered. You can use this server." if ok else
+                "❌ No answer from Migood there. This network may block it."))
+        threading.Thread(target=run, daemon=True).start()
+
+    def use_chosen_server(self):
+        url = self.chosen_server()
+        if not valid_url(url):
+            self.server_msg.set_label("That doesn't look like a web address (https://…).")
+            return
+        # Chosen server first, the others after it as backups.
+        order = [url] + [u for _, u in KNOWN if u != url]
+        migoodlib.override = order
+        if self.mode == "oobe":  # save it for the updater and later sign-ins
+            subprocess.run(["pkexec", CONFIG, "servers", *order])
+        self.server_msg.set_label(f"Using {url}")
+
+    def guest(self):
+        """Browse as Guest now; nothing is saved. Setup returns next start-up."""
+        subprocess.run(["pkexec", HELPER, "--guest-once"])
+        subprocess.Popen(["gnome-session-quit", "--logout", "--no-prompt"])
+
+    def do_signin(self):
+        username, password = self.user.get_text().strip(), self.password.get_text()
+        if not username or not password:
+            self.signin_msg.set_label("Type your username and password.")
+            return
+        self.signin_btn.set_sensitive(False)
+        self.signin_msg.set_label("")
+
+        def run():
+            try:
+                token, me = sign_in(username, password)
+                if self.mode == "oobe":
+                    # The account is made on the next page, after the PIN choice.
+                    name = me.get("username") or username
+                    self.pending = (name, password, token, display_name(me, name),
+                                    fetch_pfp(name), me.get("ageBand"))
+                    GLib.idle_add(lambda: self.go("pin"))
+                    return
+                else:
+                    os.makedirs(os.path.dirname(TOUR_DONE), exist_ok=True)
+                    path = os.path.expanduser("~/.config/migood/token")
+                    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+                        f.write(token)
+                GLib.idle_add(lambda: self.go("tour"))
+            except Exception as e:  # show any problem as a message, never crash
+                msg = str(e)
+                GLib.idle_add(lambda: self.signin_msg.set_label(msg))
+            finally:
+                GLib.idle_add(lambda: self.signin_btn.set_sensitive(True))
+        threading.Thread(target=run, daemon=True).start()
+
+    def page_pin(self):
+        self.pin1 = Gtk.PasswordEntry(placeholder_text="PIN (4 to 12 numbers)", show_peek_icon=True)
+        self.pin2 = Gtk.PasswordEntry(placeholder_text="Type the PIN again", show_peek_icon=True)
+        self.pin_msg = label("", "error")
+        return self.frame(
+            label("Unlock with a PIN?", "big-title"),
+            label("A PIN is quicker than your password and works without internet. "
+                  "Skip it to unlock with your Migood password instead. Both work offline.",
+                  "dim-label"),
+            self.pin1, self.pin2, self.pin_msg,
+            buttons=[self.button("Skip", lambda: self.finish_account(None)),
+                     self.button("Use this PIN", self.check_pin, primary=True)])
+
+    def check_pin(self):
+        a, b = self.pin1.get_text(), self.pin2.get_text()
+        if not (a.isdigit() and 4 <= len(a) <= 12):
+            self.pin_msg.set_label("A PIN is 4 to 12 numbers.")
+        elif a != b:
+            self.pin_msg.set_label("The two PINs don't match.")
+        else:
+            self.finish_account(a)
+
+    def finish_account(self, pin):
+        self.pin_msg.set_label("Creating your account…")
+
+        def run():
+            try:
+                self.make_account(*self.pending, pin=pin)
+                GLib.idle_add(lambda: self.go("tour"))
+            except Exception as e:
+                msg = str(e)
+                GLib.idle_add(lambda: self.pin_msg.set_label(msg))
+        threading.Thread(target=run, daemon=True).start()
+
+    def make_account(self, username, password, token, shown_name=None, pfp=None,
+                     age_band=None, pin=None):
+        """Ask the root helper to create the computer account (see create-account).
+        Login name = Migood username; name on screen = display name; picture = pfp."""
+        secret = json.dumps({"username": username, "password": password, "token": token,
+                             "pin": pin, "display_name": shown_name, "age_band": age_band,
+                             "pfp_png": base64.b64encode(pfp).decode() if pfp else None})
+        r = subprocess.run(["pkexec", HELPER], input=secret, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip().splitlines()[-1] if r.stderr.strip()
+                               else "Couldn't create the account on this computer.")
+        self.new_user = r.stdout.strip()
+
+    def create_account(self):
+        """Your real sign-up page (with its human check + Mii maker) in a window."""
+        try:
+            gi.require_version("WebKit", "6.0")
+            from gi.repository import WebKit
+        except (ValueError, ImportError):
+            subprocess.Popen(["xdg-open", servers()[0]])
+            return
+        win = Adw.Window(transient_for=self, modal=True, default_width=1000, default_height=700,
+                         title="Create your Migood account")
+        view = Adw.ToolbarView()
+        bar = Adw.HeaderBar()
+        done = Gtk.Button(label="I made my account", css_classes=["suggested-action"])
+        done.connect("clicked", lambda *_: win.close())
+        bar.pack_end(done)
+        view.add_top_bar(bar)
+        web = WebKit.WebView()
+        web.load_uri(servers()[0] + "/homes.html")
+        view.set_content(web)
+        win.set_content(view)
+        win.present()
+
+    def page_tour(self):
+        cards = [
+            ("🟩", "The Migood button", "Bottom-left of the dock. All your apps and a search box. "
+                                       "Search can ask Migood AI too."),
+            ("🎮", "Migood Games", "Play, chat with friends, go live, and Remote Play your other PCs."),
+            ("⚙️", "Quick Settings", "Top-right corner: Wi-Fi, sound, brightness, Night Light, "
+                                   "Do Not Disturb."),
+            ("⬆️", "Always up to date", "Migood Updates gets new versions by itself. "
+                                      "Restart when it says one is ready."),
+        ]
+        grid = Gtk.Grid(column_spacing=14, row_spacing=14, column_homogeneous=True)
+        for i, (icon, title, text) in enumerate(cards):
+            c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, css_classes=["tour-card"])
+            c.append(label(icon, "tour-icon"))
+            c.append(label(title, "title-3"))
+            c.append(label(text, "dim-label"))
+            grid.attach(c, i % 2, i // 2, 1, 1)
+        return self.frame(label("Here's what you can do", "big-title"), grid,
+                          buttons=[self.button("Next", lambda: self.go("done"), primary=True)])
+
+    def page_done(self):
+        if self.mode == "oobe":
+            text = "Your account is ready. Unlock the computer with your PIN or Migood password."
+            btn = "Start using Migood OS"
+        else:
+            text = "Have fun! Open the Migood button any time to find your apps."
+            btn = "Let's go"
+        return self.frame(picture(LOGO, 96), label("You're all set", "big-title"),
+                          label(text, "dim-label"),
+                          buttons=[self.button(btn, self.finish, primary=True)])
+
+    def finish(self):
+        if self.mode == "tour" or self.mode == "live":
+            os.makedirs(os.path.dirname(TOUR_DONE), exist_ok=True)
+            open(TOUR_DONE, "w").close()
+            self.get_application().quit()
+        else:
+            # Leave the setup session; the login screen shows the new account.
+            subprocess.run(["pkexec", HELPER, "--finish"])
+            subprocess.Popen(["gnome-session-quit", "--logout", "--no-prompt"])
+
+
+class App(Adw.Application):
+    def __init__(self, mode):
+        super().__init__(application_id="os.migood.Setup")
+        self.mode = mode
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        (self.props.active_window or Setup(self, self.mode)).present()
+
+
+def main(argv):
+    mode = "tour"
+    for a in argv[1:]:
+        if a in ("--oobe", "--live", "--tour"):
+            mode = a[2:]
+    if mode == "tour" and os.path.exists(TOUR_DONE):
+        return 0  # already seen it
+    return App(mode).run([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

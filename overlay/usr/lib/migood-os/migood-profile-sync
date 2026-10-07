@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Keeps this computer account matching the Migood Games account, at each login:
+the name on the login screen = Migood display name, picture = Migood pfp.
+Runs as the user (no admin needed: everyone may change their own name and
+picture). Quietly does nothing when offline or not signed in.
+"""
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, "/usr/lib/migood-os")
+from migoodlib import api, display_name, fetch_pfp  # noqa: E402
+
+TOKEN = os.path.expanduser("~/.config/migood/token")
+
+
+def accounts(method, arg):
+    """Call AccountsService for this user (what GNOME Settings uses)."""
+    path = subprocess.run(
+        ["gdbus", "call", "--system", "--dest", "org.freedesktop.Accounts",
+         "--object-path", "/org/freedesktop/Accounts",
+         "--method", "org.freedesktop.Accounts.FindUserById", str(os.getuid())],
+        capture_output=True, text=True, timeout=10).stdout.strip().strip("(),'")
+    if path:
+        subprocess.run(["gdbus", "call", "--system", "--dest", "org.freedesktop.Accounts",
+                        "--object-path", path, "--method",
+                        f"org.freedesktop.Accounts.User.{method}", arg],
+                       capture_output=True, timeout=10)
+
+
+def main():
+    try:
+        with open(TOKEN) as f:
+            token = f.read().strip()
+        me = api("/api/me", token=token, timeout=10)
+    except (OSError, RuntimeError):
+        return 0
+    username = me.get("username")
+    if not username:
+        return 0
+    accounts("SetRealName", display_name(me, username))
+    png = fetch_pfp(username)
+    if png:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(png)
+        accounts("SetIconFile", f.name)  # AccountsService copies it
+        os.unlink(f.name)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

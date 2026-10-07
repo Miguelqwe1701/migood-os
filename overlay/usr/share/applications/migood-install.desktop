@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Install Migood OS
+Comment=Put Migood OS on this computer
+Exec=/usr/lib/migood-os/migood-install
+Icon=/usr/share/migood-os/migood-install.svg
+Type=Application
+Categories=System;
+Keywords=install;setup;disk;

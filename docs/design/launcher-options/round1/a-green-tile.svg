@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- A: rounded green tile with a bold white M -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#4ee38a"/><stop offset="1" stop-color="#1fae5c"/></linearGradient></defs>
+  <rect x="16" y="16" width="224" height="224" rx="60" fill="url(#g)"/>
+  <path d="M68 184V76h26l34 52 34-52h26v108h-26v-62l-34 50-34-50v62z" fill="#fff"/>
+</svg>

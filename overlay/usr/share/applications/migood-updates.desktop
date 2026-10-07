@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Migood Updates
+Comment=Check for and install Migood OS updates
+Exec=/usr/lib/migood-os/migood-updates
+Icon=/usr/share/migood-os/migood-button.svg
+Type=Application
+Categories=System;Settings;
+Keywords=update;upgrade;software;migood;
+StartupNotify=true

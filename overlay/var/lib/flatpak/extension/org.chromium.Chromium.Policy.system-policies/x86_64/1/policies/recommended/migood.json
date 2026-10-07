@@ -1,0 +1,7 @@
+{
+  "HomepageLocation": "https://www.welltypers.it.com/homes.html",
+  "HomepageIsNewTabPage": false,
+  "ShowHomeButton": true,
+  "RestoreOnStartup": 4,
+  "RestoreOnStartupURLs": ["https://www.welltypers.it.com/homes.html"]
+}

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Creates this computer's user from a Migood Games sign-in (runs as root).
+
+Called by migood-setup (the first-boot setup) through pkexec:
+  create-account            JSON on stdin: {"username", "password", "token", "pin"?,
+                            "display_name"?, "pfp_png"? (base64)}
+                            Login name = Migood username, name shown on the
+                            login screen = display name, picture = Migood pfp.
+                            The computer password is the Migood password, or
+                            the PIN if one was chosen (works offline either way).
+                            -> prints the new local username
+  create-account --begin    first boot: make the hidden "migood-setup"
+                            account and log it in automatically (run by
+                            migood-firstboot.service, before the login screen)
+  create-account --finish   setup is over: stop the setup session
+  create-account --guest-once  "Use as Guest" in setup: log in as guest this
+                            time only. Setup comes back next start-up, until
+                            someone signs in with a Migood account.
+
+Only works during first-boot setup: once /var/lib/migood-os/setup-done exists
+it refuses, so it can't be used to add accounts later.
+"""
+import base64
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
+DONE = os.path.join(STATE, "setup-done")
+GDM_CONF = os.environ.get("MIGOOD_GDM_CONF", "/etc/gdm3/custom.conf")
+
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def local_name(migood_name):
+    """Migood username -> a valid Linux username ("Cool Kid_7" -> "cool-kid_7")."""
+    n = re.sub(r"[^a-z0-9_-]+", "-", migood_name.lower()).strip("-")
+    if not n or not re.match(r"[a-z_]", n):
+        n = "m" + n
+    return n[:32]
+
+
+def clean_name(text):
+    """A display name safe for /etc/passwd (no ':' ',' or new lines), max 64."""
+    return re.sub(r"[:,\n\r\x00]", " ", str(text)).strip()[:64] or "Migood player"
+
+
+def set_picture(name, png):
+    """Login-screen picture via AccountsService (what GDM and Settings read)."""
+    if not png or not png.startswith(b"\x89PNG") or len(png) > 2_000_000:
+        return
+    icons = os.environ.get("MIGOOD_AS_DIR", "/var/lib/AccountsService")
+    os.makedirs(os.path.join(icons, "icons"), exist_ok=True)
+    os.makedirs(os.path.join(icons, "users"), exist_ok=True)
+    icon = os.path.join(icons, "icons", name)
+    with open(icon, "wb") as f:
+        f.write(png)
+    os.chmod(icon, 0o644)
+    with open(os.path.join(icons, "users", name), "w") as f:
+        f.write(f"[User]\nIcon={icon}\nSystemAccount=false\n")
+
+
+def write_private(path, text, uid=0, gid=0):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chown(path, uid, gid)
+
+
+def set_autologin(user):
+    """Point GDM's automatic login at `user`, or turn it off (None)."""
+    try:
+        with open(GDM_CONF) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = ["[daemon]"]
+    out, in_daemon = [], False
+    for line in lines:
+        if line.strip().startswith("["):
+            in_daemon = line.strip() == "[daemon]"
+        if in_daemon and line.split("=")[0].strip() in ("AutomaticLoginEnable", "AutomaticLogin"):
+            continue
+        out.append(line)
+        if line.strip() == "[daemon]" and user:
+            out += ["AutomaticLoginEnable=true", f"AutomaticLogin={user}"]
+    os.makedirs(os.path.dirname(GDM_CONF), exist_ok=True)
+    with open(GDM_CONF, "w") as f:
+        f.write("\n".join(out) + "\n")
+
+
+def create():
+    if os.path.exists(DONE):
+        fail("Setup is already finished on this computer.")
+    try:
+        data = json.load(sys.stdin)
+        migood, password, token = data["username"], data["password"], data["token"]
+        pin = str(data.get("pin") or "")
+        shown = clean_name(data.get("display_name") or migood)
+        junior = data.get("age_band") == "junior"
+        pfp = base64.b64decode(data["pfp_png"]) if data.get("pfp_png") else None
+    except (ValueError, KeyError):
+        fail("Bad request.")
+    if pin and not re.fullmatch(r"[0-9]{4,12}", pin):
+        fail("A PIN is 4 to 12 numbers.")
+    name = local_name(migood)
+    try:
+        pwd.getpwnam(name)
+        fail(f"There's already an account called {name} on this computer.")
+    except KeyError:
+        pass
+    # The account is the computer's admin (installs apps, changes settings),
+    # except for 12-and-under ("junior") Migood accounts: those get a normal
+    # account, like the site's protections (feature 7).
+    groups = "lpadmin" if junior else "sudo,adm,lpadmin"
+    subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", shown,
+                    "-G", groups, name], check=True)
+    subprocess.run(["chpasswd"], input=f"{name}:{pin or password}", text=True, check=True)
+    pw = pwd.getpwnam(name)
+    # Token for this user's apps, and one for the system updater.
+    write_private(os.path.join(pw.pw_dir, ".config/migood/token"), token, pw.pw_uid, pw.pw_gid)
+    os.chown(os.path.join(pw.pw_dir, ".config/migood"), pw.pw_uid, pw.pw_gid)
+    os.chown(os.path.join(pw.pw_dir, ".config"), pw.pw_uid, pw.pw_gid)
+    write_private(os.path.join(STATE, "token"), token)
+    with open(os.path.join(STATE, "account.json"), "w") as f:
+        json.dump({"local": name, "migood": migood, "junior": junior}, f)
+    set_picture(name, pfp)
+    print(name)
+
+
+def people():
+    """Accounts made for people (not system ones), except the guest account."""
+    return [p for p in pwd.getpwall()
+            if 1000 <= p.pw_uid < 60000 and p.pw_name not in ("guest", "nobody")]
+
+
+def powerwash():
+    """Factory reset (scheduled by `migood-config powerwash`): delete every
+    person's account and files, the Migood sign-in, and pictures."""
+    for p in people():
+        subprocess.run(["userdel", "-r", "-f", p.pw_name], check=False)
+        for d in ("icons", "users"):
+            try:
+                os.remove(os.path.join("/var/lib/AccountsService", d, p.pw_name))
+            except FileNotFoundError:
+                pass
+    for f in ("token", "account.json", "setup-done", "powerwash"):
+        try:
+            os.remove(os.path.join(STATE, f))
+        except FileNotFoundError:
+            pass
+
+
+def begin():
+    if os.path.exists(os.path.join(STATE, "powerwash")):
+        powerwash()
+    if os.path.exists(DONE):
+        return
+    try:
+        pwd.getpwnam("migood-setup")
+    except KeyError:
+        # A system account (hidden from the login screen), no password.
+        subprocess.run(["useradd", "-r", "-m", "-d", "/var/lib/migood-setup", "-s", "/bin/bash",
+                        "-c", "Migood OS setup", "migood-setup"], check=True)
+    set_autologin("migood-setup")
+
+
+def guest_once():
+    if os.path.exists(DONE):
+        fail("Setup is already finished on this computer.")
+    set_autologin("guest")  # firstboot points it back at setup next start-up
+
+
+def finish():
+    os.makedirs(STATE, exist_ok=True)
+    open(DONE, "w").close()
+    set_autologin(None)  # next time: the normal login screen
+    subprocess.run(["systemctl", "start", "--no-block", "migood-os-update.service"])
+
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        fail("Must run as root (through pkexec).")
+    if sys.argv[1:] == ["--finish"]:
+        finish()
+    elif sys.argv[1:] == ["--begin"]:
+        begin()
+    elif sys.argv[1:] == ["--guest-once"]:
+        guest_once()
+    elif len(sys.argv) == 1:
+        create()
+    else:
+        fail("usage: create-account [--begin|--finish|--guest-once]")

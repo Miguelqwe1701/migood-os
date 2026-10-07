@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""Opens a Migood Games page in the browser, on whichever server works here
+(main site first, then the backups from Migood OS Settings).
+  migood-open email      Migood Mail (also the computer's mail app)
+  migood-open support    Get help
+  migood-open [home]     the home page
+A mailto: link (from another app) opens Migood Mail too.
+"""
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/migood-os")
+from migoodlib import servers, test_server  # noqa: E402
+
+PAGES = {"home": "/homes.html", "email": "/homes.html?section=email",
+         "support": "/homes.html?section=settings"}
+
+
+def main(argv):
+    arg = argv[1] if len(argv) > 1 else "home"
+    page = PAGES["email"] if arg.startswith("mailto:") else PAGES.get(arg, PAGES["home"])
+    base = next((s for s in servers() if test_server(s)), servers()[0])
+    subprocess.Popen(["xdg-open", base + page])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- C5: four rounded app tiles (Googlebook style), the top-left one is the green bunny -->
+  <rect x="16" y="16" width="224" height="224" rx="60" fill="#0a0d12"/>
+  <rect x="52" y="52" width="68" height="68" rx="22" fill="#2ecc71"/>
+  <g transform="translate(86 90) scale(0.85)" fill="#0a0d12"><g><ellipse cx="-11" cy="-20" rx="7.5" ry="20" transform="rotate(-12 -11 -20)"/><ellipse cx="11" cy="-20" rx="7.5" ry="20" transform="rotate(12 11 -20)"/><circle cx="0" cy="10" r="20"/></g></g>
+  <rect x="136" y="52" width="68" height="68" rx="22" fill="#ffffff"/>
+  <rect x="52" y="136" width="68" height="68" rx="22" fill="#ffffff"/>
+  <rect x="136" y="136" width="68" height="68" rx="22" fill="#ffffff"/>
+</svg>

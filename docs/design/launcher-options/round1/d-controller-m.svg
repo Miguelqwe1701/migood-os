@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- D: green game-controller shape with an M on it -->
+  <path d="M70 70h116c30 0 50 22 54 52l8 54c3 24-22 38-38 22l-28-28H74l-28 28c-16 16-41 2-38-22l8-54c4-30 24-52 54-52z" fill="#2ecc71"/>
+  <path d="M90 158V90h20l18 28 18-28h20v68h-18v-38l-20 30-20-30v38z" fill="#0a0d12"/>
+</svg>

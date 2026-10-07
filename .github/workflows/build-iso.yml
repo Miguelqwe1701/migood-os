@@ -1,0 +1,131 @@
+# Builds the Migood OS ISO and puts it on the repo's Releases tab.
+#
+# Normally it starts from the newest ISO on the Releases tab and only applies
+# what changed (build-iso.sh BASE_ISO=...), which is much faster. The first
+# build, or "from scratch", builds Ubuntu + everything from nothing.
+#
+# Two ways to start it:
+#   - Actions tab -> "Build Migood OS" -> Run workflow -> type a version
+#   - push a tag:  git tag v0.1.0 && git push origin v0.1.0
+#
+# Releases are marked "pre-release" (beta) and the repo is private, so only
+# people with access to the repo can download them.
+name: Build Migood OS
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 0.1.0"
+        required: true
+        default: "0.1.0"
+      release:
+        description: "Publish to the Releases tab"
+        type: boolean
+        default: true
+      from_scratch:
+        description: "Build from scratch instead of updating the latest release ISO"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["overlay/**", "tests/**"]
+
+permissions:
+  contents: write  # needed to create releases
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Updater tests
+        run: python3 -m unittest discover tests -v
+      - name: Script syntax
+        run: bash -n cubic/customize.sh && bash -n build/build-iso.sh
+
+  iso:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make room (runners start with ~20 GB free; the build needs ~25)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+          sudo docker image prune -af >/dev/null || true
+          df -h /
+
+      - name: Get the latest Migood OS ISO to start from
+        if: ${{ !inputs.from_scratch }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then echo "No release yet, building from scratch."; exit 0; fi
+          mkdir -p base && cd base
+          gh release download "$TAG" -p 'migood-os-*.iso' -p 'migood-os-*.iso.part*'
+          if ls *.iso.part* >/dev/null 2>&1; then
+            cat $(ls *.iso.part* | sort) > base.iso && rm *.iso.part*   # join the parts
+          else
+            mv migood-os-*.iso base.iso
+          fi
+          echo "Starting from $TAG"
+          echo "BASE_ISO=$PWD/base.iso" >> "$GITHUB_ENV"
+
+      - name: Build ISO
+        run: |
+          VERSION="${VERSION#v}"   # tag v0.1.0 -> 0.1.0
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sudo --preserve-env=VERSION,BASE_ISO bash build/build-iso.sh
+          rm -f base/base.iso
+
+      - name: Desktop screenshots
+        continue-on-error: true  # nice to have; never blocks the release
+        run: sudo bash build/screenshot.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: docs/screenshots/*.png
+          if-no-files-found: ignore
+
+      - name: Split if over GitHub's 2 GB per-file limit
+        run: |
+          cd out
+          ISO="migood-os-$VERSION.iso"
+          if [ "$(stat -c %s "$ISO")" -gt 2000000000 ]; then
+            split -b 1900M -d "$ISO" "$ISO.part"
+            rm "$ISO"
+          fi
+          ls -lh
+
+      - name: Publish to Releases
+        if: github.event_name == 'push' || inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Migood OS $VERSION (based on Ubuntu 24.04), beta build.
+
+          **Download:** grab the \`.iso\` and write it to a USB stick with
+          [balenaEtcher](https://etcher.balena.io/) or Rufus, or boot it in a VM.
+
+          If the ISO came in parts (\`.iso.part00\`, \`.part01\`, ...), download
+          all of them and join them first:
+          - Windows (cmd): \`copy /b migood-os-$VERSION.iso.part00 + migood-os-$VERSION.iso.part01 migood-os-$VERSION.iso\`
+          - Linux/macOS: \`cat migood-os-$VERSION.iso.part* > migood-os-$VERSION.iso\`
+
+          Check it with the \`.sha256\` file.
+          EOF
+          cp docs/screenshots/*.png out/ 2>/dev/null || true
+          gh release create "v$VERSION" out/* \
+            --title "Migood OS $VERSION" --notes-file notes.md \
+            --prerelease --target "$GITHUB_SHA"
