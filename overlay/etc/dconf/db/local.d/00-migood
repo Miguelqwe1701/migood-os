@@ -43,11 +43,9 @@ dot-style-unfocused='DOTS'
 dot-color-override=true
 dot-color-1='#2ecc71'
 show-activities-button=false
-show-showdesktop-button=false
 
 # Launcher: ArcMenu full-screen grid, Migood logo as the button.
 [org/gnome/shell/extensions/arcmenu]
-menu-layout='Chromebook'
+menu-layout='chromebook'
 menu-button-appearance='Icon'
-custom-menu-button-icon='/usr/share/migood-os/migood-launcher.png'
-menu-button-icon='Custom_Icon'
+menu-button-icon='/usr/share/migood-os/migood-launcher.png'

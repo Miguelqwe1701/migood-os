@@ -42,8 +42,22 @@ dpkg --add-architecture i386
 apt-get update -q
 
 say "2/10 Desktop pieces (shelf, launcher, phone link)"
-try_install gnome-shell-extension-manager gnome-shell-extension-dash-to-panel \
-  gnome-shell-extension-arc-menu gnome-shell-extension-gsconnect dconf-cli
+try_install gnome-shell-extension-manager gnome-shell-extension-gsconnect dconf-cli unzip
+# Dash to Panel (shelf) and ArcMenu (launcher) aren't Ubuntu packages, so they
+# come from extensions.gnome.org, the version made for this GNOME.
+SHELL_VER="$(dpkg-query -W -f='${Version}' gnome-shell | cut -d. -f1)"
+for uuid in dash-to-panel@jderose9.github.com arcmenu@arcmenu.com; do
+  url="$(curl -fsS "https://extensions.gnome.org/extension-info/?uuid=$uuid&shell_version=$SHELL_VER" \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin)["download_url"])')" \
+    && curl -fsSL -o /tmp/ext.zip "https://extensions.gnome.org$url" \
+    && rm -rf "/usr/share/gnome-shell/extensions/$uuid" \
+    && unzip -q -o /tmp/ext.zip -d "/usr/share/gnome-shell/extensions/$uuid" \
+    && cp "/usr/share/gnome-shell/extensions/$uuid"/schemas/*.xml /usr/share/glib-2.0/schemas/ \
+    && chmod -R a+rX "/usr/share/gnome-shell/extensions/$uuid" \
+    && echo "   ok  $uuid" || warn "could not install $uuid"
+  rm -f /tmp/ext.zip
+done
+glib-compile-schemas /usr/share/glib-2.0/schemas
 
 say "3/10 Gaming + streaming"
 # steam-installer asks to accept a licence; pre-answer it.
