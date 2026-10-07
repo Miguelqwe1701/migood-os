@@ -13,6 +13,7 @@ case "$PAM_TYPE" in
       mount -t tmpfs -o size=25%,mode=0700 guest-home "$HOME_DIR"
       cp -a /etc/skel/. "$HOME_DIR"/
       chown -R guest:guest "$HOME_DIR"
+      chmod 700 "$HOME_DIR"  # cp -a copied /etc/skel's open permissions
     fi
     ;;
   close_session)
