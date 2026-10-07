@@ -31,7 +31,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migoodlib  # noqa: E402
 from migoodlib import (KNOWN, display_name, fetch_pfp, servers, sign_in,  # noqa: E402
-                       test_server, valid_url)
+                       diagnose, valid_url)
 
 LOGO = "/usr/share/migood-os/migood-launcher.png"
 WORDMARK = "/usr/share/migood-os/migood-logo.png"
@@ -265,10 +265,10 @@ class Setup(Adw.ApplicationWindow):
         self.server_msg.set_label("Testing…")
 
         def run():
-            ok = test_server(url)
+            why = diagnose(url)
             GLib.idle_add(lambda: self.server_msg.set_label(
-                "✅ Migood answered. You can use this server." if ok else
-                "❌ No answer from Migood there. This network may block it."))
+                "✅ Migood answered. You can use this server." if why is None else
+                f"❌ {why} Try the other server."))
         threading.Thread(target=run, daemon=True).start()
 
     def use_chosen_server(self):
