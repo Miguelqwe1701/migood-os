@@ -40,33 +40,65 @@ endpoints are not shown on the website and are gated by Migood Beta.
   `/api/shop/points`, `/api/shop/earn`, `/api/shop/redeem`. No idle farming,
   a daily cap, and no real money or trading for kids.
 
-## ~50 features (rough build order)
+## ~50 features: status
 
-Out of the box: 1 Migood sign-in on first boot · 2 Migood Games app pinned and
-opened on login · 3 shelf/launcher/quick settings · 4 Migood wallpapers
-(seasonal) · 5 green/dark theme, Nunito, rounded · 6 Guest mode · 7
-12-and-under protections · 8 4-screen setup wizard · 9 Plymouth Migood logo ·
-10 low-RAM defaults (zram).
+✅ built · 🟡 partly / needs a real-PC test · 🌐 needs Migood server work first (other repo)
 
-Games: 11 Steam + Proton · 12 Wine + Bottles · 13 Remote Play host/client · 14
-controllers · 15 gamemode · 16 RetroArch/Dolphin/PPSSPP (no games) · 17 "Play
-on My PC" tiles · 18 wake your PC · 19 MangoHud · 20 cloud saves.
+| # | Feature | Status |
+|---|---|---|
+| 1 | Migood sign-in on first boot = the computer account | ✅ setup (`migood-setup --oobe` + `create-account`) |
+| 2 | Migood Games pinned + opens on login | ✅ pinned, autostart (full-screen "home" still an open question) |
+| 3 | Shelf, launcher, Quick Settings | ✅ Googlebook-style dock + top bar |
+| 4 | Migood wallpapers (seasonal) | 🌐 placeholder for now; needs a wallpaper feed |
+| 5 | Green/dark theme, Nunito, rounded | ✅ |
+| 6 | Guest mode (wiped on sign-out) | 🟡 built (RAM home, PAM, logind), needs a real-PC test |
+| 7 | 12-and-under protections | 🟡 junior accounts aren't admin; full parental controls with 38 |
+| 8 | Setup wizard | ✅ welcome, Wi-Fi, sign in, PIN, tour |
+| 9 | Boot logo | ✅ Plymouth |
+| 10 | Low-RAM defaults | ✅ zram |
+| 11 | Steam + Proton | 🟡 Steam installed; Proton is one click in Steam |
+| 12 | Wine + Bottles | ✅ |
+| 13 | Remote Play | ✅ via the Migood Games app (xdotool, PipeWire) |
+| 14 | Controllers | ✅ steam-devices rules |
+| 15 | Game Mode | 🟡 installed; on for games that request it |
+| 16 | Emulators (no games) | ✅ RetroArch, Dolphin, PPSSPP |
+| 17 | "Play on My PC" tiles | 🌐 |
+| 18 | Wake your PC | 🌐 Linux version of wake.js (rtcwake service) |
+| 19 | FPS overlay toggle | ✅ Settings → Gaming |
+| 20 | Cloud saves | 🌐 |
+| 21 | Migood notifications | 🟡 through the Migood Games app |
+| 22 | Migood Mail as mail app | ✅ |
+| 23 | Lives with PipeWire | ✅ PipeWire + the app |
+| 24 | Discord status | ✅ in the app |
+| 25 | Migood AI in launcher search | 🌐 needs an AI endpoint for the OS |
+| 26 | Friends in Quick Settings | 🌐 |
+| 27 | Beta channel toggle | ✅ Settings → Updates |
+| 28 | Get help with logs | ✅ Settings → Help (`/api/support/open`) |
+| 29 | Migood status widget | 🌐 needs a status endpoint |
+| 30 | OS achievements | 🌐 |
+| 31 | OTA updates | ✅ daily check, install at shutdown |
+| 32 | Stable + beta channels | ✅ |
+| 33 | Rollback snapshots | ✅ Btrfs + Timeshift before each update |
+| 34 | Signed manifests | 🟡 sha256 now, signing key later |
+| 35 | Firewall | ✅ ufw on |
+| 36 | Ubuntu security updates | ✅ unattended-upgrades |
+| 37 | Full-disk encryption option | ✅ installer |
+| 38 | Parental controls | 🌐 needs the account's rules from the server |
+| 39 | Shared browser blocklist | 🌐 |
+| 40 | Powerwash | ✅ Settings → Reset |
+| 41 | Chromium + Migood start page | ✅ |
+| 42 | Files + cloud drives | ✅ GNOME Files + Online Accounts |
+| 43 | Waydroid (Android apps) | ⏳ later (experimental) |
+| 44 | Phone link | ✅ GSConnect |
+| 45 | Screenshot / record | ✅ GNOME (Print Screen) |
+| 46 | On-screen keyboard, touch | ✅ GNOME |
+| 47 | Battery saver, charge to 80% | ✅ power profiles + Settings → Battery |
+| 48 | Printers | ✅ CUPS driverless |
+| 49 | Accessibility | ✅ GNOME |
+| 50 | "Migood OS" settings page | ✅ Migood OS Settings |
 
-Migood built in: 21 Migood notifications · 22 Migood Mail · 23 Lives with
-PipeWire · 24 Discord status · 25 Migood AI in search · 26 friends in Quick
-Settings · 27 Beta toggles · 28 "Get help" tickets with logs · 29 status
-widget · 30 OS achievements.
-
-Updates & safety: 31 OTA daily check, install on shutdown · 32 stable/beta
-channels · 33 rollback snapshots (Timeshift) · 34 signed manifests (sha256
-now, key later) · 35 ufw on · 36 Ubuntu security updates · 37 full-disk
-encryption option · 38 parental controls · 39 shared browser blocklist · 40
-Powerwash.
-
-Everyday: 41 Chrome/Chromium + Migood start page · 42 Files + cloud drives · 43
-Waydroid (experimental) · 44 GSConnect · 45 screenshot/record · 46 OSK + touch
-· 47 battery saver / charge to 80% · 48 CUPS driverless · 49 accessibility ·
-50 "Migood OS" Settings page.
+Also built: installer (Calamares), Migood Updates app, server picker for blocked
+networks, PIN unlock, Migood display name + profile picture on the account.
 
 ## Server endpoints (already built on the Migood server: `osupdates.go`)
 
