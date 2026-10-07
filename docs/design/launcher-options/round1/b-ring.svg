@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- B: dark circle, green ring, green M (like the Googlebook "G" button) -->
+  <circle cx="128" cy="128" r="112" fill="#0a0d12"/>
+  <circle cx="128" cy="128" r="100" fill="none" stroke="#2ecc71" stroke-width="14"/>
+  <path d="M78 172V84h22l28 42 28-42h22v88h-22v-50l-28 40-28-40v50z" fill="#2ecc71"/>
+</svg>

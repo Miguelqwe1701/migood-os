@@ -135,7 +135,14 @@ class Setup(Adw.ApplicationWindow):
             label("Welcome to Migood OS", "big-title"),
             label("Your games, your friends and Migood AI, built into the computer. "
                   "Let's get you set up. It only takes a minute.", "dim-label"),
-            buttons=[self.button("Get started", lambda: self.go("wifi"), primary=True)])
+            buttons=([self.button("Install Migood OS", self.install)] if self.mode == "live" else [])
+            + [self.button("Try it" if self.mode == "live" else "Get started",
+                           lambda: self.go("wifi"), primary=True)])
+
+    def install(self):
+        """From the USB: start the installer and close this welcome."""
+        subprocess.Popen(["/usr/lib/migood-os/migood-install"])
+        self.get_application().quit()
 
     def online(self):
         try:

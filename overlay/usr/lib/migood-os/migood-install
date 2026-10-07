@@ -1,0 +1,6 @@
+#!/bin/sh
+# Starts the Migood OS installer from the live USB. The live user may use sudo
+# without a password (casper sets that up). The installer runs as root, so it
+# is given access to the screen (XWayland) first.
+xhost +si:localuser:root >/dev/null 2>&1 || true
+exec sudo -E env QT_QPA_PLATFORM=xcb calamares

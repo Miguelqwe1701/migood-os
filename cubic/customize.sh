@@ -92,6 +92,11 @@ fi
 
 say "4/10 System: low-RAM, snapshots, firewall"
 try_install zram-tools timeshift ufw unattended-upgrades
+# Installer (Calamares) + what it needs to put GRUB on BIOS and UEFI PCs,
+# encrypt the disk (optional) and use Btrfs (for Timeshift snapshots).
+try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shim-signed \
+  grub-pc-bin grub-efi-amd64-bin grub2-common efibootmgr os-prober cryptsetup \
+  cryptsetup-initramfs btrfs-progs dosfstools x11-xserver-utils
 if [ -f /etc/default/zramswap ]; then
   sed -i 's/^#\?ALGO=.*/ALGO=zstd/; s/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap
 fi
@@ -150,6 +155,10 @@ install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
+cp "$ASSETS/migood-button.svg" "$ASSETS/migood-button.png" /usr/share/migood-os/
+B=/usr/share/calamares/branding/migood
+cp "$ASSETS/migood-button.png" "$B/migood-button.png"
+cp "$ASSETS/wallpaper.png" "$B/welcome.png"
 # Guest mode: a "guest" account with no password and no admin rights. Its home
 # lives in memory and is wiped at sign-out (guest-session + PAM + logind).
 id guest >/dev/null 2>&1 || useradd -m -s /bin/bash -c "Guest" guest

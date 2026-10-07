@@ -7,7 +7,7 @@
 [org/gnome/shell]
 enabled-extensions=['migood-shell@migood.os', 'dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
 disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
-favorite-apps=['migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
+favorite-apps=['migood-install.desktop', 'migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
 
 [org/gnome/desktop/interface]
 color-scheme='prefer-dark'
@@ -56,8 +56,9 @@ dot-color-1='#2ecc71'
 show-activities-button=false
 panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":false,"position":"stackedBR"},{"element":"dateMenu","visible":false,"position":"stackedBR"},{"element":"systemMenu","visible":false,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
 
-# Launcher: ArcMenu full-screen grid, Migood logo as the button.
+# Launcher: ArcMenu, opened by the Migood button (assets/migood-button.svg,
+# "bunny ears" design picked by the owner; options in docs/design/).
 [org/gnome/shell/extensions/arcmenu]
 menu-layout='chromebook'
 menu-button-appearance='Icon'
-menu-button-icon='/usr/share/migood-os/migood-launcher.png'
+menu-button-icon='/usr/share/migood-os/migood-button.svg'
