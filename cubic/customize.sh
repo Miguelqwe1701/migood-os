@@ -113,13 +113,10 @@ x-scheme-handler/https=$BROWSER_DESKTOP
 EOF
 
 say "6/10 Nunito font"
+# Bundled in assets/fonts (SIL Open Font License, see OFL.txt there).
 install -d /usr/share/fonts/truetype/nunito
-if curl -fsSL -o /usr/share/fonts/truetype/nunito/Nunito.ttf \
-     "https://github.com/google/fonts/raw/main/ofl/nunito/Nunito%5Bwght%5D.ttf"; then
-  fc-cache -f >/dev/null
-else
-  warn "Nunito download failed, desktop falls back to the default font"
-fi
+cp "$ASSETS"/fonts/Nunito-*.ttf "$ASSETS/fonts/OFL.txt" /usr/share/fonts/truetype/nunito/ \
+  && fc-cache -f >/dev/null || warn "Nunito not installed, desktop uses the default font"
 
 say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
@@ -135,16 +132,18 @@ dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service
 
 say "8/10 Name: Migood OS $VERSION (based on Ubuntu)"
-. /usr/lib/os-release   # read Ubuntu's values, e.g. VERSION_CODENAME
+# Read only the codename ("noble") from Ubuntu's file. A subshell, because the
+# file also has VERSION=, which would overwrite ours.
+CODENAME="$(. /usr/lib/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
 cat > /usr/lib/os-release <<EOF
 PRETTY_NAME="Migood OS $VERSION (based on Ubuntu 24.04)"
 NAME="Migood OS"
 VERSION_ID="$VERSION"
 VERSION="$VERSION"
-VERSION_CODENAME=$VERSION_CODENAME
+VERSION_CODENAME=$CODENAME
 ID=migood-os
 ID_LIKE="ubuntu debian"
-UBUNTU_CODENAME=$UBUNTU_CODENAME
+UBUNTU_CODENAME=$CODENAME
 HOME_URL="https://github.com/Miguelqwe1701/migood-os"
 LOGO=migood-os
 EOF
@@ -193,7 +192,7 @@ else
 fi
 
 apt-get autoremove -y >/dev/null && apt-get clean
-say "Done. Migood OS $VERSION is ready for Cubic's next pages."
+say "Done. Migood OS $VERSION customized."
 if [ ${#WARNINGS[@]} -gt 0 ]; then
   printf '\033[1;33mWarnings (%d):\033[0m\n' "${#WARNINGS[@]}"
   printf '  - %s\n' "${WARNINGS[@]}"
