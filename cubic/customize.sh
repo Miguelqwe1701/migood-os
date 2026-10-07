@@ -96,7 +96,7 @@ try_install zram-tools timeshift ufw unattended-upgrades
 # encrypt the disk (optional) and use Btrfs (for Timeshift snapshots).
 try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shim-signed \
   grub-pc-bin grub-efi-amd64-bin grub2-common efibootmgr os-prober cryptsetup \
-  cryptsetup-initramfs btrfs-progs dosfstools x11-xserver-utils
+  cryptsetup-initramfs btrfs-progs dosfstools x11-xserver-utils console-setup
 if [ -f /etc/default/zramswap ]; then
   sed -i 's/^#\?ALGO=.*/ALGO=zstd/; s/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap
 fi

@@ -23,6 +23,14 @@ Read `docs/PLAN.md` first: it has the decisions, the ~50-feature list and the op
 - Cubic is GUI-only, so `build/build-iso.sh` does the same thing from the command line.
   It works in a cloud container (root, no KVM) and on GitHub Actions.
 
+## Container hygiene (learned the hard way)
+- The build bind-mounts /proc, /sys and /dev into `work/chroot`. Unmount them
+  (plain `umount`, not `-l`) as soon as a test is done; check with
+  `mount | grep migood-os/work`.
+- Never `pkill -f <pattern>` when the pattern is also in your own command
+  line: it kills your own shell, and the cleanup after it never runs.
+- Disk is tight (~30 GB): keep at most one base ISO + one output ISO.
+
 ## Checks before pushing
 - `python3 -m unittest discover tests`
 - `bash -n` on every script you changed
