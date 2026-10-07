@@ -271,6 +271,16 @@ Categories=Game;
 EOF
   install -d /etc/xdg/autostart
   cp /usr/share/applications/migood-games.desktop /etc/xdg/autostart/
+elif [ -d /opt/migood-games ]; then
+  # Download failed (e.g. the Migood server was down), but this image was made
+  # from an earlier Migood OS that already has the app: keep that copy.
+  warn "no new Migood Games app downloaded; kept the one already in the image"
+else
+  warn "no assets/migood-games-*.tar.gz, desktop app not installed"
+fi
+# The app's AppArmor profile, for a freshly downloaded app or a kept one.
+BIN="$(find /opt/migood-games -maxdepth 1 -type f -executable -name 'migood*' 2>/dev/null | head -1)"
+if [ -n "$BIN" ]; then
   # Ubuntu 24.04 blocks the sandbox Electron apps use (unprivileged user
   # namespaces) unless the app has an AppArmor profile that allows it; without
   # one the app crashed at start (SIGTRAP). Same profile Ubuntu ships for
@@ -288,8 +298,6 @@ profile migood-games $BIN flags=(unconfined) {
 EOF
   apparmor_parser -Q -K /etc/apparmor.d/migood-games 2>/dev/null \
     || warn "AppArmor profile for Migood Games didn't parse"
-else
-  warn "no assets/migood-games-*.tar.gz, desktop app not installed"
 fi
 
 apt-get autoremove -y >/dev/null && apt-get clean
