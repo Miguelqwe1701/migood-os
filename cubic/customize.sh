@@ -163,15 +163,32 @@ dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
   migood-battery-limit.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
+# Overlay schema overrides (e.g. the login screen's Migood logo) take effect
+# only once compiled.
+glib-compile-schemas /usr/share/glib-2.0/schemas
 cp "$ASSETS/migood-button.svg" "$ASSETS/migood-button.png" "$ASSETS/migood-install.svg" /usr/share/migood-os/
 B=/usr/share/calamares/branding/migood
 cp "$ASSETS/migood-button.png" "$B/migood-button.png"
 cp "$ASSETS/wallpaper.png" "$B/welcome.png"
-# Guest mode: a "guest" account with no password and no admin rights. Its home
-# lives in memory and is wiped at sign-out (guest-session + PAM + logind).
-id guest >/dev/null 2>&1 || useradd -m -s /bin/bash -c "Guest" guest
-passwd -d guest >/dev/null
+# Guest mode: the in-memory home + wipe at sign-out (guest-session + PAM +
+# logind). The "guest" account itself is NOT made here: on the live USB,
+# casper needs user number 1000 for its own (admin) live user, and a guest
+# taking it left the live session with only Guest (no admin, no installer).
+# create-account makes the guest on an installed PC instead.
+userdel -r guest >/dev/null 2>&1 || true    # images built before this fix
 pam-auth-update --package --enable migood-guest
+
+# Networking: NetworkManager manages cable + Wi-Fi (overlay netplan file);
+# netplan wants its files readable by root only.
+chmod 600 /etc/netplan/*.yaml
+
+# Ubuntu's own "Welcome to Ubuntu" first-login wizard (gnome-initial-setup):
+# Migood setup replaces it. dpkg excludes keep it gone after updates.
+rm -f /etc/xdg/autostart/gnome-initial-setup-first-login.desktop \
+      /etc/xdg/autostart/gnome-initial-setup-copy-worker.desktop
+if ! grep -q '^InitialSetupEnable' /etc/gdm3/custom.conf 2>/dev/null; then
+  sed -i 's/^\[daemon\]$/[daemon]\nInitialSetupEnable=false/' /etc/gdm3/custom.conf
+fi
 
 say "8/10 Name: Migood OS $VERSION (based on Ubuntu)"
 # Read only the codename ("noble") from Ubuntu's file. A subshell, because the
@@ -192,6 +209,8 @@ EOF
 ln -sf ../usr/lib/os-release /etc/os-release
 echo "Migood OS $VERSION \\n \\l" > /etc/issue
 echo "Migood OS $VERSION" > /etc/issue.net
+# The description some tools show (DISTRIB_ID stays Ubuntu: apt and PPAs need it).
+sed -i "s/^DISTRIB_DESCRIPTION=.*/DISTRIB_DESCRIPTION=\"Migood OS $VERSION (based on Ubuntu 24.04)\"/" /etc/lsb-release
 
 say "9/10 Remove Ubuntu branding + Migood boot logo"
 # Ubuntu's wallpapers can't be uninstalled (GNOME depends on that package and
