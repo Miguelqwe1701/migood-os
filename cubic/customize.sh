@@ -157,7 +157,7 @@ dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
   migood-battery-limit.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
-cp "$ASSETS/migood-button.svg" "$ASSETS/migood-button.png" /usr/share/migood-os/
+cp "$ASSETS/migood-button.svg" "$ASSETS/migood-button.png" "$ASSETS/migood-install.svg" /usr/share/migood-os/
 B=/usr/share/calamares/branding/migood
 cp "$ASSETS/migood-button.png" "$B/migood-button.png"
 cp "$ASSETS/wallpaper.png" "$B/welcome.png"

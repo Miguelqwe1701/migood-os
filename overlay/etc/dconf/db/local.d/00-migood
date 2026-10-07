@@ -62,3 +62,4 @@ panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"posi
 menu-layout='chromebook'
 menu-button-appearance='Icon'
 menu-button-icon='/usr/share/migood-os/migood-button.svg'
+menu-button-icon-size=34
