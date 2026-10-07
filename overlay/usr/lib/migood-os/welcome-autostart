@@ -10,5 +10,6 @@ elif [ "$(id -un)" = migood-setup ]; then
 elif grep -qw 'boot=casper' /proc/cmdline; then
   exec /usr/lib/migood-os/migood-setup --live     # trying Migood OS from USB
 else
+  /usr/lib/migood-os/migood-profile-sync &         # name + picture from Migood
   exec /usr/lib/migood-os/migood-setup --tour     # a new account's first login
 fi

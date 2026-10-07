@@ -2,7 +2,10 @@
 """Creates this computer's user from a Migood Games sign-in (runs as root).
 
 Called by migood-setup (the first-boot setup) through pkexec:
-  create-account            JSON on stdin: {"username", "password", "token", "pin"?}
+  create-account            JSON on stdin: {"username", "password", "token", "pin"?,
+                            "display_name"?, "pfp_png"? (base64)}
+                            Login name = Migood username, name shown on the
+                            login screen = display name, picture = Migood pfp.
                             The computer password is the Migood password, or
                             the PIN if one was chosen (works offline either way).
                             -> prints the new local username
@@ -17,6 +20,7 @@ Called by migood-setup (the first-boot setup) through pkexec:
 Only works during first-boot setup: once /var/lib/migood-os/setup-done exists
 it refuses, so it can't be used to add accounts later.
 """
+import base64
 import json
 import os
 import pwd
@@ -40,6 +44,26 @@ def local_name(migood_name):
     if not n or not re.match(r"[a-z_]", n):
         n = "m" + n
     return n[:32]
+
+
+def clean_name(text):
+    """A display name safe for /etc/passwd (no ':' ',' or new lines), max 64."""
+    return re.sub(r"[:,\n\r\x00]", " ", str(text)).strip()[:64] or "Migood player"
+
+
+def set_picture(name, png):
+    """Login-screen picture via AccountsService (what GDM and Settings read)."""
+    if not png or not png.startswith(b"\x89PNG") or len(png) > 2_000_000:
+        return
+    icons = os.environ.get("MIGOOD_AS_DIR", "/var/lib/AccountsService")
+    os.makedirs(os.path.join(icons, "icons"), exist_ok=True)
+    os.makedirs(os.path.join(icons, "users"), exist_ok=True)
+    icon = os.path.join(icons, "icons", name)
+    with open(icon, "wb") as f:
+        f.write(png)
+    os.chmod(icon, 0o644)
+    with open(os.path.join(icons, "users", name), "w") as f:
+        f.write(f"[User]\nIcon={icon}\nSystemAccount=false\n")
 
 
 def write_private(path, text, uid=0, gid=0):
@@ -78,6 +102,8 @@ def create():
         data = json.load(sys.stdin)
         migood, password, token = data["username"], data["password"], data["token"]
         pin = str(data.get("pin") or "")
+        shown = clean_name(data.get("display_name") or migood)
+        pfp = base64.b64decode(data["pfp_png"]) if data.get("pfp_png") else None
     except (ValueError, KeyError):
         fail("Bad request.")
     if pin and not re.fullmatch(r"[0-9]{4,12}", pin):
@@ -89,7 +115,7 @@ def create():
     except KeyError:
         pass
     # First account = the computer's admin (can install apps, change settings).
-    subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", migood,
+    subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", shown,
                     "-G", "sudo,adm,lpadmin", name], check=True)
     subprocess.run(["chpasswd"], input=f"{name}:{pin or password}", text=True, check=True)
     pw = pwd.getpwnam(name)
@@ -100,6 +126,7 @@ def create():
     write_private(os.path.join(STATE, "token"), token)
     with open(os.path.join(STATE, "account.json"), "w") as f:
         json.dump({"local": name, "migood": migood}, f)
+    set_picture(name, pfp)
     print(name)
 
 

@@ -16,6 +16,7 @@ The sign-in page has "Connection settings" to pick another Migood server, for
 networks (hotels, schools) that block the main one.
 MIGOOD_SETUP_PAGE=<name> opens straight on a page (used for screenshots).
 """
+import base64
 import json
 import os
 import subprocess
@@ -29,7 +30,8 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migoodlib  # noqa: E402
-from migoodlib import KNOWN, servers, sign_in, test_server, valid_url  # noqa: E402
+from migoodlib import (KNOWN, display_name, fetch_pfp, servers, sign_in,  # noqa: E402
+                       test_server, valid_url)
 
 LOGO = "/usr/share/migood-os/migood-launcher.png"
 WORDMARK = "/usr/share/migood-os/migood-logo.png"
@@ -55,14 +57,13 @@ entry { border-radius: 14px; min-height: 44px; }
 
 
 def picture(path, size):
+    """An image exactly `size` pixels tall (Gtk.Picture would grow to fill space)."""
     if not os.path.exists(path):
         return Gtk.Box()
-    p = Gtk.Picture.new_for_filename(path)
-    p.set_size_request(size, size)
-    p.set_can_shrink(True)
-    p.set_content_fit(Gtk.ContentFit.CONTAIN)
-    p.set_halign(Gtk.Align.CENTER)
-    return p
+    img = Gtk.Image.new_from_file(path)
+    img.set_pixel_size(size)
+    img.set_halign(Gtk.Align.CENTER)
+    return img
 
 
 def label(text, *classes, wrap=True):
@@ -293,7 +294,8 @@ class Setup(Adw.ApplicationWindow):
                 token, me = sign_in(username, password)
                 if self.mode == "oobe":
                     # The account is made on the next page, after the PIN choice.
-                    self.pending = (me.get("username") or username, password, token)
+                    name = me.get("username") or username
+                    self.pending = (name, password, token, display_name(me, name), fetch_pfp(name))
                     GLib.idle_add(lambda: self.go("pin"))
                     return
                 else:
@@ -336,17 +338,19 @@ class Setup(Adw.ApplicationWindow):
 
         def run():
             try:
-                self.make_account(*self.pending, pin)
+                self.make_account(*self.pending, pin=pin)
                 GLib.idle_add(lambda: self.go("tour"))
             except Exception as e:
                 msg = str(e)
                 GLib.idle_add(lambda: self.pin_msg.set_label(msg))
         threading.Thread(target=run, daemon=True).start()
 
-    def make_account(self, username, password, token, pin=None):
-        """Ask the root helper to create the computer account (see create-account)."""
+    def make_account(self, username, password, token, shown_name=None, pfp=None, pin=None):
+        """Ask the root helper to create the computer account (see create-account).
+        Login name = Migood username; name on screen = display name; picture = pfp."""
         secret = json.dumps({"username": username, "password": password, "token": token,
-                             "pin": pin})
+                             "pin": pin, "display_name": shown_name,
+                             "pfp_png": base64.b64encode(pfp).decode() if pfp else None})
         r = subprocess.run(["pkexec", HELPER], input=secret, capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip().splitlines()[-1] if r.stderr.strip()

@@ -91,3 +91,23 @@ def sign_in(username, password):
     except RuntimeError:
         me = {}
     return token, me
+
+
+def display_name(me, fallback):
+    """The name people see (Migood display name), else the username."""
+    return (me.get("displayName") or me.get("username") or fallback).strip()
+
+
+def fetch_pfp(username, limit=2_000_000):
+    """The Migood profile picture (PNG bytes), or None. Same URL the site uses."""
+    for base in servers():
+        try:
+            url = f"{base}/cdn/pfps/{urllib.request.quote(username)}.png"
+            req = urllib.request.Request(url, headers={"User-Agent": "migood-os"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = r.read(limit + 1)
+            if data.startswith(b"\x89PNG") and len(data) <= limit:
+                return data
+        except (urllib.error.URLError, OSError, ValueError):
+            continue
+    return None
