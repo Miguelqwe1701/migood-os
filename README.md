@@ -19,6 +19,19 @@ To build it yourself instead, use an Ubuntu 24.04 machine or VM with about 30 GB
 sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 ```
 
+## Trying it
+
+- **VirtualBox / VMware:** new "Ubuntu (64-bit)" VM, 4 GB+ RAM, 30 GB disk, ISO as the CD.
+- **USB stick:** write the ISO with balenaEtcher or Rufus and boot from it.
+- **GitHub Codespace (Docker):** runs a virtual machine inside Docker and shows the
+  screen in your browser on port 8006. Check `ls /dev/kvm` first, or it will be very slow:
+
+  ```bash
+  docker run -it --rm -p 8006:8006 --device=/dev/kvm --device=/dev/net/tun \
+    --cap-add NET_ADMIN -e RAM_SIZE=6G -e CPU_CORES=4 \
+    -v "$PWD/migood-os-0.1.0.iso:/boot.iso" qemux/qemu
+  ```
+
 ## What's in here
 
 | Path | What it does |
