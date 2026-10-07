@@ -15,6 +15,10 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CH="${WORK:-$REPO/work}/chroot"
 OUT="${SHOTS:-$REPO/docs/screenshots}"
 W=1920 H=1080 DPY=:99 U=shot
+# A user number nothing else uses. The chroot shares process numbers with the
+# machine it runs on, so "stop everything of user X" must never match a real
+# user there: on GitHub's runners 1001 is the runner itself (that killed a build).
+SHOT_UID=4242
 [ "$(id -u)" = 0 ] || { echo "run as root (sudo)"; exit 1; }
 [ -x "$CH/usr/bin/gnome-shell" ] || { echo "no build in $CH, run build-iso.sh first"; exit 1; }
 mkdir -p "$OUT"
@@ -23,8 +27,8 @@ apt-get install -y -q xvfb imagemagick xdotool >/dev/null
 
 XPID=""
 cleanup() {
-  chroot "$CH" pkill -u "$U" 2>/dev/null || true
-  chroot "$CH" pkill dbus-daemon 2>/dev/null || true
+  pkill -u "$SHOT_UID" 2>/dev/null || true             # only our screenshot user
+  [ -f "$CH/run/dbus/shot.pid" ] && kill "$(cat "$CH/run/dbus/shot.pid")" 2>/dev/null || true
   sleep 1
   chroot "$CH" userdel -r "$U" >/dev/null 2>&1 || true
   [ -n "$XPID" ] && kill "$XPID" 2>/dev/null || true
@@ -46,10 +50,13 @@ sleep 2
 # The system message bus: on a real boot systemd starts it; GNOME won't
 # start without it.
 mkdir -p "$CH/run/dbus" && rm -f "$CH/run/dbus/pid"
-chroot "$CH" dbus-daemon --system --fork
+chroot "$CH" dbus-daemon --system --fork --print-pid=3 3>"$CH/run/dbus/shot.pid"
+
+# Leftovers from an earlier run belong to another user and can't be overwritten.
+rm -f "$CH/tmp/shell.log" "$CH/tmp/bus"
 
 # A fresh user, so the screenshots show what a new account really gets.
-chroot "$CH" useradd -m -s /bin/bash "$U" 2>/dev/null || true
+chroot "$CH" useradd -m -u "$SHOT_UID" -s /bin/bash "$U" 2>/dev/null || true
 UID_=$(chroot "$CH" id -u "$U")
 chroot "$CH" install -d -o "$U" -m 700 "/run/user/$UID_"
 
@@ -71,7 +78,7 @@ app() {  # app <name> <command...>: open an app, screenshot it, close it
   as_user env DBUS_SESSION_BUS_ADDRESS="$(cat "$CH/tmp/bus")" "$@" >/dev/null 2>&1 &
   sleep 12
   shot "$name"
-  chroot "$CH" pkill -u "$U" -f /usr/lib/migood-os/ 2>/dev/null || true
+  pkill -u "$SHOT_UID" -f /usr/lib/migood-os/ 2>/dev/null || true
   sleep 2
 }
 
