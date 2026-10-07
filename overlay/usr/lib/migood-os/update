@@ -162,6 +162,26 @@ def releases_from(payload):
     return sorted(payload, key=lambda r: version_key(r["version"]))
 
 
+def offered(rel, base):
+    """Release settings the server delivers and the PC must honour itself.
+    Returns None when this PC should take it, else why not."""
+    settings = rel.get("settings") or {}
+    min_from = settings.get("minFrom")
+    if min_from and version_key(base) < version_key(min_from):
+        return f"needs {min_from} or newer first (this PC: {base})"
+    try:
+        rollout = int(settings.get("rollout") or 0)  # % of PCs; 0 = everyone
+    except (TypeError, ValueError):
+        rollout = 0
+    if 0 < rollout < 100:
+        # Same PC + same version always lands in the same bucket (0-99), so a
+        # PC doesn't flip in and out of a rollout between checks.
+        digest = hashlib.sha256(f"{device_id()}:{rel['version']}".encode()).hexdigest()
+        if int(digest[:8], 16) % 100 >= rollout:
+            return f"not in this {rollout}% rollout yet"
+    return None
+
+
 def sha256_of(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -201,8 +221,13 @@ def cmd_check():
     if not releases:
         log(f"up to date ({ver}, {channel})")
         return 0
+    base = ver  # the version this PC will be on once everything staged so far is installed
     for rel in releases:
-        if version_key(rel["version"]) <= version_key(ver):
+        if version_key(rel["version"]) <= version_key(base):
+            continue
+        why_not = offered(rel, base)
+        if why_not:
+            log(f"skipping {rel['version']}: {why_not}")
             continue
         folder = os.path.join(STATE, "staged", rel["version"])
         os.makedirs(folder, exist_ok=True)
@@ -225,6 +250,7 @@ def cmd_check():
         with open(os.path.join(folder, "release.json"), "w") as out:
             json.dump(rel, out)
         log(f"{rel['version']} staged, installs at next shutdown")
+        base = rel["version"]
     return 0
 
 
@@ -313,9 +339,11 @@ def write_status(result, message=""):
     for v in staged_versions():
         try:
             with open(os.path.join(STATE, "staged", v, "release.json")) as f:
-                staged.append({"version": v, "notes": json.load(f).get("notes", "")})
+                rel = json.load(f)
+            staged.append({"version": v, "notes": rel.get("notes", ""),
+                           "mandatory": bool((rel.get("settings") or {}).get("mandatory"))})
         except (OSError, ValueError):
-            staged.append({"version": v, "notes": ""})
+            staged.append({"version": v, "notes": "", "mandatory": False})
     status = {
         "version": current_version(),
         "channel": read_kv(CONF).get("CHANNEL", "stable"),

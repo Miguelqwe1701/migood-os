@@ -125,11 +125,45 @@ class UpdaterTest(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
 
-    def publish(self, version, name, data, sha=None):
+    def publish(self, version, name, data, sha=None, settings=None):
         FakeServer.files[name] = data
-        FakeServer.releases.append({"version": version, "channel": "beta", "files": [
-            {"name": name, "size": len(data),
-             "sha256": sha or hashlib.sha256(data).hexdigest()}]})
+        FakeServer.releases.append({"version": version, "channel": "beta", "settings": settings or {},
+                                    "files": [{"name": name, "size": len(data),
+                                               "sha256": sha or hashlib.sha256(data).hexdigest()}]})
+
+    # --- release settings the server delivers (minFrom, rollout, mandatory) ---
+    def test_min_from_skips_a_jump_too_far(self):
+        self.publish("0.3.0", "c.tar.gz", make_bundle(self.marker), settings={"minFrom": "0.2.0"})
+        self.up.cmd_check()
+        self.assertEqual(self.up.staged_versions(), [])  # 0.1.0 can't go straight to 0.3.0
+
+    def test_min_from_counts_releases_staged_before_it(self):
+        self.publish("0.2.0", "a.tar.gz", make_bundle(self.marker))
+        self.publish("0.3.0", "c.tar.gz", make_bundle(self.marker), settings={"minFrom": "0.2.0"})
+        self.up.cmd_check()
+        self.assertEqual(self.up.staged_versions(), ["0.2.0", "0.3.0"])  # 0.2.0 installs first
+
+    def test_rollout_is_stable_per_device(self):
+        rel = {"version": "0.2.0", "settings": {"rollout": 50}}
+        first = self.up.offered(rel, "0.1.0")
+        self.assertEqual([self.up.offered(rel, "0.1.0") for _ in range(5)], [first] * 5)
+        self.assertIsNone(self.up.offered({"version": "0.2.0", "settings": {"rollout": 0}}, "0.1.0"))
+        self.assertIsNone(self.up.offered({"version": "0.2.0", "settings": {"rollout": 100}}, "0.1.0"))
+
+    def test_rollout_reaches_about_that_share_of_pcs(self):
+        taken = 0
+        for i in range(400):
+            with open(os.path.join(self.state, "device-id"), "w") as f:
+                f.write(f"pc-{i}\n")
+            taken += self.up.offered({"version": "0.2.0", "settings": {"rollout": 25}}, "0.1.0") is None
+        self.assertTrue(70 <= taken <= 130, taken)  # ~25% of 400
+
+    def test_mandatory_shown_to_the_app(self):
+        self.publish("0.2.0", "a.tar.gz", make_bundle(self.marker), settings={"mandatory": True})
+        self.up.cmd_check()
+        self.up.write_status("ok")
+        with open(self.status) as f:
+            self.assertTrue(json.load(f)["staged"][0]["mandatory"])
 
     def version(self):
         return self.up.read_kv(self.osrel)["VERSION_ID"]
@@ -248,7 +282,7 @@ class UpdaterTest(unittest.TestCase):
             st = json.load(f)
         self.assertEqual(st["result"], "ok")
         self.assertEqual(st["version"], "0.1.0")
-        self.assertEqual(st["staged"], [{"version": "0.2.0", "notes": "New shelf"}])
+        self.assertEqual(st["staged"], [{"version": "0.2.0", "notes": "New shelf", "mandatory": False}])
         self.assertNotIn(TOKEN, json.dumps(st))  # never leak the token
 
     def test_status_when_not_in_beta(self):
