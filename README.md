@@ -12,6 +12,10 @@ You don't need a computer for this. GitHub builds it:
 - Or push a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
 About an hour later the ISO shows up on the **Releases** tab as a pre-release.
+It's over GitHub's 2 GB file limit, so it comes in parts. Download all the parts and the
+`.sha256` file into one folder, then join them with `tools/merge-iso.bat` (Windows,
+double-click; keep `merge-iso.ps1` next to it) or `bash tools/merge-iso.sh` (Linux/macOS).
+New releases include these scripts next to the parts.
 
 To build it yourself instead, use an Ubuntu 24.04 machine or VM with about 30 GB free:
 
@@ -48,6 +52,7 @@ sudo bash build/build-iso.sh          # -> out/migood-os-0.1.0.iso
 | `overlay/usr/lib/migood-os/update` | The OTA updater (Python). `check` runs daily, `apply` runs at shutdown, and `checkin` reports to the server. |
 | `overlay/etc/dconf/db/local.d/00-migood` | Desktop defaults: shelf, launcher, dark theme, Nunito. |
 | `assets/` | Images and the Migood desktop app (see below). |
+| `tools/merge-iso.*` | Join the downloaded ISO parts back into one `.iso` and check it. |
 | `vm/` | Run the ISO in a virtual machine inside Docker (`bash vm/start.sh`). |
 | `tests/` | Updater tests against a fake Migood server: `python3 -m unittest discover tests` |
 
