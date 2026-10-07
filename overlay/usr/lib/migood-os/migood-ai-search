@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+""""Ask Migood AI" in the launcher search (GNOME search provider over D-Bus).
+
+Whatever you type, one result is offered: "Ask Migood AI: <what you typed>".
+Picking it opens the Migood AI window with that question. Started by D-Bus
+when GNOME (or the Migood launcher) first searches, see
+/usr/share/gnome-shell/search-providers/os.migood.AISearch.search-provider.ini.
+"""
+import subprocess
+
+from gi.repository import Gio, GLib
+
+IFACE = """
+<node>
+  <interface name="org.gnome.Shell.SearchProvider2">
+    <method name="GetInitialResultSet"><arg type="as" direction="in"/><arg type="as" direction="out"/></method>
+    <method name="GetSubsearchResultSet"><arg type="as" direction="in"/><arg type="as" direction="in"/><arg type="as" direction="out"/></method>
+    <method name="GetResultMetas"><arg type="as" direction="in"/><arg type="aa{sv}" direction="out"/></method>
+    <method name="ActivateResult"><arg type="s" direction="in"/><arg type="as" direction="in"/><arg type="u" direction="in"/></method>
+    <method name="LaunchSearch"><arg type="as" direction="in"/><arg type="u" direction="in"/></method>
+  </interface>
+</node>
+"""
+AI = "/usr/lib/migood-os/migood-ai"
+ICON = "/usr/share/migood-os/migood-button.svg"
+
+
+def results(terms):
+    q = " ".join(terms).strip()
+    return [q] if len(q) >= 3 else []  # result id = the question itself
+
+
+def call(_conn, _sender, _path, _iface, method, params, inv):
+    args = params.unpack()
+    if method == "GetInitialResultSet":
+        inv.return_value(GLib.Variant("(as)", (results(args[0]),)))
+    elif method == "GetSubsearchResultSet":
+        inv.return_value(GLib.Variant("(as)", (results(args[1]),)))
+    elif method == "GetResultMetas":
+        metas = [{"id": GLib.Variant("s", q),
+                  "name": GLib.Variant("s", f"Ask Migood AI: {q}"),
+                  "description": GLib.Variant("s", "Get an answer from Migood AI"),
+                  "gicon": GLib.Variant("s", Gio.FileIcon.new(Gio.File.new_for_path(ICON)).to_string())}
+                 for q in args[0]]
+        inv.return_value(GLib.Variant("(aa{sv})", (metas,)))
+    elif method == "ActivateResult":
+        subprocess.Popen([AI, args[0]])
+        inv.return_value(None)
+    elif method == "LaunchSearch":
+        subprocess.Popen([AI, " ".join(args[0])])
+        inv.return_value(None)
+
+
+def main():
+    node = Gio.DBusNodeInfo.new_for_xml(IFACE)
+    loop = GLib.MainLoop()
+
+    def acquired(conn, _name):
+        conn.register_object("/os/migood/AISearch", node.interfaces[0], call, None, None)
+
+    Gio.bus_own_name(Gio.BusType.SESSION, "os.migood.AISearch", Gio.BusNameOwnerFlags.NONE,
+                     acquired, None, lambda *_: loop.quit())
+    loop.run()
+
+
+if __name__ == "__main__":
+    main()
