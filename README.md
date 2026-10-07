@@ -88,7 +88,9 @@ bash tools/make-bundle.sh 0.1.0 0.1.1     # -> out/migood-os-0.1.1-update.tar.gz
 
 Changes that aren't overlay files (something `cubic/customize.sh` does, a new
 package) need a hand-written `bundles/<version>/extra.sh`, and/or `.deb` files in
-`bundles/<version>/debs/`. `bundles/0.1.1/extra.sh` is an example.
+`bundles/<version>/debs/`. `bundles/0.1.1/extra.sh` is an example. If the build
+scripts changed and there's no `extra.sh`, `make-bundle.sh` prints a warning (and
+the Actions run shows it in yellow).
 
 Then add the release on the Migood server (`POST /api/os/releases`, owner only)
 with the bundle's name, sha256 and size, so PCs see it.
