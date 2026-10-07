@@ -421,8 +421,8 @@ def serve(daemon):
         user = migood_user()
         daemon.sys.user = user
         if user != owner:
-            uid = pwd.getpwnam(user).pw_uid if user else 0
-            os.chown(SOCK, uid, -1)
+            if os.geteuid() == 0:  # always, except in the tests
+                os.chown(SOCK, pwd.getpwnam(user).pw_uid if user else 0, -1)
             owner = user
         ready, _, _ = select.select([srv], [], [], 60)
         if not ready:
@@ -434,7 +434,7 @@ def serve(daemon):
 def client(daemon, conn, owner):
     with conn:
         uid = peer_uid(conn)
-        allowed = {0} | ({pwd.getpwnam(owner).pw_uid} if owner else set())
+        allowed = {0, os.geteuid()} | ({pwd.getpwnam(owner).pw_uid} if owner else set())
         f = conn.makefile("rwb")
         if uid not in allowed:
             f.write(b'{"ok":false,"error":"not allowed"}\n')
