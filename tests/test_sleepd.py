@@ -153,7 +153,7 @@ class SleepdTest(unittest.TestCase):
         self.assertEqual(self.pc.calls[:2], [("screen", False), ("freeze",)])
         self.assertIn(("suspend",), self.pc.calls)
         self.assertNotIn(("thaw",), self.pc.calls)  # apps stay paused until a real wake
-        self.assertEqual(Server.bodies, [{"token": TICKET}])
+        self.assertEqual(Server.bodies, [{"token": TICKET, "battery": 80, "low": False}])
         self.assertEqual(self.d.state["last"]["result"], "asleep")
 
     def test_woken_from_phone(self):
@@ -222,6 +222,27 @@ class SleepdTest(unittest.TestCase):
         self.start_sleeping()
         self.assertNotIn("alarm", self.d.state)
         self.assertTrue(self.d.handle({"cmd": "status"}, 1000)["low_battery"])
+
+    def test_desktop_without_battery_sends_no_battery(self):
+        self.pc.percent = None
+        self.start_sleeping()
+        self.alarm_wake()
+        self.assertEqual(Server.bodies[0], {"token": TICKET, "low": False})
+
+    def test_low_battery_told_once_at_sleep(self):
+        self.pc.on_battery, self.pc.percent = True, 12
+        self.start_sleeping()
+        self.assertEqual(Server.bodies, [{"token": TICKET, "battery": 12, "low": True}])
+
+    def test_battery_runs_low_during_the_cycle(self):
+        self.pc.on_battery, self.pc.percent = True, 40
+        self.start_sleeping()
+        self.pc.percent = 14  # drained while asleep
+        self.alarm_wake()
+        # Told once, in the check-in itself; then no new alarm: it stays asleep.
+        self.assertEqual(Server.bodies, [{"token": TICKET, "battery": 14, "low": True}])
+        self.assertNotIn("alarm", self.d.state)
+        self.assertIn(("suspend",), self.pc.calls)
 
     def test_cancel(self):
         self.start_sleeping()

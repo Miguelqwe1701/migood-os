@@ -247,10 +247,16 @@ class Sleepd:
         os.replace(STATE + ".new", STATE)
 
     # --- server ---
-    def wake_check(self, up=False):
+    def wake_check(self, up=False, battery=None, low=None):
         body = {"token": self.state["token"]}
         if up:
             body["up"] = True
+        # Battery (PCs that have one) and "low" (the last check-in before the
+        # cycle stops for low battery), so "Your devices" can show it.
+        if battery is not None:
+            body["battery"] = battery
+        if low is not None:
+            body["low"] = low
         if self.server:
             return migoodlib.api("/api/remote/wake/check", body, only=self.server, timeout=15)
         return migoodlib.api("/api/remote/wake/check", body, timeout=15)
@@ -323,6 +329,16 @@ class Sleepd:
                 self.state["alarm"] = int(self.sys.now() + minutes * 60)
                 self.sys.set_alarm(self.state["alarm"])
             self.save()
+            tell_low = low and not self.state.get("low_sent")
+        if tell_low:
+            # The cycle stops here; let the server show "Asleep - low battery".
+            try:
+                self.wake_check(battery=pct, low=True)
+                with self.lock:
+                    self.state["low_sent"] = True
+                    self.save()
+            except RuntimeError as e:
+                log(f"low battery not reported ({e})")
         log("going to sleep" + (" (low battery, no check-ins)" if low else f", check-in in {minutes} min"))
         self.sys.suspend()
 
@@ -366,12 +382,16 @@ class Sleepd:
         if not self.sys.network_up(NET_WAIT):
             self.note("no-network")
             return self.go_to_sleep(every)
+        on_batt, pct = self.sys.battery()
+        low = bool(on_batt and pct is not None and pct < LOW_BATTERY)
         try:
-            r = self.wake_check()
+            r = self.wake_check(battery=pct, low=low)
         except RuntimeError as e:
             log(f"check-in: {e}")
             self.note("no-server")
             return self.go_to_sleep(every)
+        with self.lock:
+            self.state["low_sent"] = low
         if r.get("gone"):
             return self.finish("gone", tell_server=False)
         if r.get("wake"):
