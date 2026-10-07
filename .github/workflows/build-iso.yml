@@ -27,6 +27,15 @@ on:
         description: "Build from scratch instead of updating the latest release ISO"
         type: boolean
         default: false
+      publish_server:
+        description: "Also send it to Migood OS PCs (Migood server). Off = GitHub only"
+        type: boolean
+        default: false
+      server_channel:
+        description: "Which PCs get it (only if the box above is ticked)"
+        type: choice
+        options: [beta, stable]
+        default: beta
   push:
     tags: ["v*"]
   pull_request:
@@ -48,6 +57,7 @@ jobs:
         run: |
           bash -n cubic/customize.sh && bash -n build/build-iso.sh
           bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh
+          python3 -m py_compile tools/publish-os.py
 
   iso:
     needs: test
@@ -111,7 +121,8 @@ jobs:
           ISO="migood-os-$VERSION.iso"
           if [ "$(stat -c %s "$ISO")" -gt 2000000000 ]; then
             split -b 1900M -d "$ISO" "$ISO.part"
-            rm "$ISO"
+            # The whole ISO waits outside out/ for "Publish to the Migood server".
+            mkdir -p ../full && mv "$ISO" ../full/
             # The scripts that join the parts again go on the release too.
             cp ../tools/merge-iso.sh ../tools/merge-iso.ps1 ../tools/merge-iso.bat .
           fi
@@ -142,6 +153,24 @@ jobs:
           gh release create "v$VERSION" out/* \
             --title "Migood OS $VERSION" --notes-file notes.md \
             --prerelease --target "$GITHUB_SHA"
+
+      # Only when the owner ticked "Also send it to Migood OS PCs" (reaches real PCs).
+      - name: Publish to the Migood server
+        if: inputs.publish_server
+        env:
+          MIGOOD_OS_PUBLISH_KEY: ${{ secrets.MIGOOD_OS_PUBLISH_KEY }}
+          CHANNEL: ${{ inputs.server_channel }}
+        run: |
+          ISO="full/migood-os-$VERSION.iso"; [ -f "$ISO" ] || ISO="out/migood-os-$VERSION.iso"
+          FILES=("$ISO")
+          [ -f "out/migood-os-$VERSION-update.tar.gz" ] && FILES+=("out/migood-os-$VERSION-update.tar.gz")
+          APP="$(cat work/migood-games.version 2>/dev/null || true)"
+          [ "$APP" = unknown ] && APP=""
+          # Short notes for the PCs' Migood Updates app (not the GitHub download help).
+          echo "Migood OS $VERSION (based on Ubuntu 24.04)${APP:+. Comes with the Migood Games app $APP}." > server-notes.md
+          python3 tools/publish-os.py --version "$VERSION" --channel "$CHANNEL" \
+            --notes-file server-notes.md ${APP:+--app-version "$APP"} "${FILES[@]}"
+          rm -rf full
 
       # Screenshots come last, after the release is published, so a problem
       # here can never stop the ISO from being released.

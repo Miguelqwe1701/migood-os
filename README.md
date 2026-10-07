@@ -75,6 +75,21 @@ Never add Windows files, Ubuntu/Canonical logos, games or ROMs.
 A bundle is a `.tar.gz` with a `debs/` folder (packages to install) and/or an
 `apply.sh` script.
 
+### Sending a release to Migood OS PCs
+
+GitHub's Releases tab is only for downloading the ISO. Installed PCs get updates
+from the Migood server. To send a build there, tick **"Also send it to Migood OS
+PCs"** when starting the Actions run (pick **beta** first; **stable** reaches
+everyone). The run uploads the ISO and the update bundle with
+`tools/publish-os.py` and publishes the release.
+
+It needs the repository secret **`MIGOOD_OS_PUBLISH_KEY`** (Settings -> Secrets and
+variables -> Actions). Never put that key in a file, a commit or a chat.
+
+Release settings the updater honours: `minFrom` (oldest version that may update
+straight to it), `rollout` (% of PCs, by a stable hash of the device id) and
+`mandatory` (shown in Migood Updates).
+
 ### Making a bundle
 
 GitHub Actions makes one with every release: `migood-os-<version>-update.tar.gz`
