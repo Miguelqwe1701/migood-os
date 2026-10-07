@@ -64,11 +64,15 @@ say "3/10 Gaming + streaming"
 echo steam steam/question select "I AGREE" | debconf-set-selections
 echo steam steam/license note '' | debconf-set-selections
 try_install steam-installer wine64 gamemode mangohud xdotool \
-  retroarch dolphin-emu ppsspp flatpak
+  retroarch flatpak
 if command -v flatpak >/dev/null; then
   flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
-    && flatpak install -y --noninteractive flathub com.usebottles.bottles \
-    || warn "Bottles (flatpak) not installed, can be added after install"
+    || warn "Flathub not added"
+  # Bottles (Windows .exe games), Dolphin (GameCube/Wii) and PPSSPP (PSP) aren't Ubuntu
+  # 24.04 packages, so they come from Flathub.
+  for app in com.usebottles.bottles org.DolphinEmu.dolphin-emu org.ppsspp.PPSSPP; do
+    flatpak install -y --noninteractive flathub "$app" || warn "$app (flatpak) not installed"
+  done
 fi
 
 say "4/10 System: low-RAM, snapshots, firewall"
