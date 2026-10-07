@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Migood OS updater.
+
+How updates flow (see docs/PLAN.md, "Step 3"):
+
+  update check    asks the server for every release newer than ours (oldest
+                  first), downloads each file (resuming half-done downloads)
+                  and checks its sha256. Verified files wait in the "staged"
+                  folder. A systemd timer runs this daily.
+  update apply    installs staged releases in order: Timeshift snapshot first,
+                  then each bundle (.debs + apply.sh), then bumps VERSION in
+                  os-release. Runs at shutdown.
+  update checkin  tells the server "this device runs version X".
+
+A bundle is a .tar.gz with an optional debs/ folder and an optional apply.sh.
+.iso files in a release are for fresh installs, so the updater skips them.
+
+Only the Python standard library is used, so nothing extra has to be installed.
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+# Every path can be changed with an environment variable. The tests use that
+# to run the updater inside a temporary folder instead of the real system.
+CONF = os.environ.get("MIGOOD_CONF", "/etc/migood-os/update.conf")
+STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
+OS_RELEASE = os.environ.get("MIGOOD_OS_RELEASE", "/usr/lib/os-release")
+NO_SNAPSHOT = os.environ.get("MIGOOD_NO_SNAPSHOT") == "1"
+
+
+def log(msg):
+    print(f"migood-os-update: {msg}", flush=True)
+
+
+# ---------- small helpers ----------
+
+def read_kv(path):
+    """Read a KEY=value file (update.conf, os-release) into a dict."""
+    out = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    out[k.strip()] = v.strip().strip('"')
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def version_key(v):
+    """'0.10.2' -> (0, 10, 2), so 0.10 sorts after 0.9 (plain text would not)."""
+    return tuple(int(p) if p.isdigit() else 0 for p in v.split("."))
+
+
+def current_version():
+    return read_kv(OS_RELEASE).get("VERSION_ID", "0.0.0")
+
+
+def set_version(version):
+    """Swap VERSION / VERSION_ID in os-release, keep every other line."""
+    with open(OS_RELEASE) as f:
+        lines = f.read().splitlines()
+    out = []
+    for line in lines:
+        if line.startswith("VERSION_ID="):
+            line = f'VERSION_ID="{version}"'
+        elif line.startswith("VERSION="):
+            line = f'VERSION="{version}"'
+        out.append(line)
+    tmp = OS_RELEASE + ".new"
+    with open(tmp, "w") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, OS_RELEASE)  # all-or-nothing, never a half-written file
+
+
+def config():
+    c = read_kv(CONF)
+    server = c.get("SERVER", "").rstrip("/")
+    if not server.startswith("https://") and not server.startswith("http://"):
+        sys.exit(f"migood-os-update: set SERVER=https://... in {CONF}")
+    return server, c.get("CHANNEL", "stable")
+
+
+def token():
+    """The Migood account token saved at first boot (only root can read it)."""
+    try:
+        with open(os.path.join(STATE, "token")) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        sys.exit("migood-os-update: not signed in yet (no token)")
+
+
+def device_id():
+    """A random id for this computer, made once and then kept."""
+    path = os.path.join(STATE, "device-id")
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        os.makedirs(STATE, exist_ok=True)
+        dev = str(uuid.uuid4())
+        with open(path, "w") as f:
+            f.write(dev + "\n")
+        return dev
+
+
+def request(server, path, data=None, headers=None):
+    h = {"Authorization": f"Bearer {token()}", "User-Agent": "migood-os-update"}
+    h.update(headers or {})
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode()
+        h["Content-Type"] = "application/json"
+    req = urllib.request.Request(server + path, data=body, headers=h)
+    return urllib.request.urlopen(req, timeout=60)
+
+
+def safe_name(name):
+    """Refuse file names like '../../etc/passwd', since the server picks the names."""
+    if not name or name != os.path.basename(name) or name.startswith("."):
+        raise ValueError(f"bad file name from server: {name!r}")
+    return name
+
+
+def releases_from(payload):
+    # Accept a bare list or {"releases": [...]} / {"updates": [...]}.
+    if isinstance(payload, dict):
+        payload = payload.get("releases") or payload.get("updates") or []
+    return sorted(payload, key=lambda r: version_key(r["version"]))
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ---------- check: download + verify ----------
+
+def download(server, name, dest):
+    """Download with resume: a leftover .part file continues where it stopped."""
+    part = dest + ".part"
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    headers = {"Range": f"bytes={have}-"} if have else {}
+    path = "/api/os/files/" + urllib.parse.quote(name)
+    try:
+        resp = request(server, path, headers=headers)
+    except urllib.error.HTTPError as e:
+        if e.code == 416:  # we already have every byte
+            return part
+        raise
+    with resp:
+        # 206 = server honoured the Range, append; 200 = full file, start over.
+        mode = "ab" if resp.status == 206 else "wb"
+        with open(part, mode) as f:
+            shutil.copyfileobj(resp, f, 1 << 20)
+    return part
+
+
+def cmd_check():
+    server, channel = config()
+    ver = current_version()
+    q = urllib.parse.urlencode({"from": ver, "channel": channel})
+    with request(server, f"/api/os/updates?{q}") as resp:
+        releases = releases_from(json.load(resp))
+    if not releases:
+        log(f"up to date ({ver}, {channel})")
+        return 0
+    for rel in releases:
+        if version_key(rel["version"]) <= version_key(ver):
+            continue
+        folder = os.path.join(STATE, "staged", rel["version"])
+        os.makedirs(folder, exist_ok=True)
+        for f in rel.get("files", []):
+            if isinstance(f, str):
+                f = {"name": f}
+            name = safe_name(f["name"])
+            if name.endswith(".iso"):
+                continue  # ISOs are for fresh installs, not updates
+            dest = os.path.join(folder, name)
+            if os.path.exists(dest) and sha256_of(dest) == f.get("sha256"):
+                continue  # already downloaded and verified
+            log(f"downloading {rel['version']}/{name}")
+            part = download(server, name, dest)
+            got = sha256_of(part)
+            if not f.get("sha256") or got != f["sha256"]:
+                os.remove(part)  # never keep a file that fails the check
+                raise RuntimeError(f"{name}: sha256 mismatch (got {got})")
+            os.replace(part, dest)
+        with open(os.path.join(folder, "release.json"), "w") as out:
+            json.dump(rel, out)
+        log(f"{rel['version']} staged, installs at next shutdown")
+    return 0
+
+
+# ---------- apply: install staged releases ----------
+
+def snapshot(version):
+    if NO_SNAPSHOT or not shutil.which("timeshift"):
+        log("no Timeshift snapshot (timeshift missing or disabled)")
+        return
+    subprocess.run(["timeshift", "--create", "--scripted",
+                    "--comments", f"before Migood OS {version}"], check=True)
+
+
+def apply_bundle(path):
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(path) as tar:
+            tar.extractall(tmp, filter="data")  # "data" blocks ../ and links out
+        debs = sorted(
+            os.path.join(tmp, "debs", d)
+            for d in os.listdir(os.path.join(tmp, "debs"))
+            if d.endswith(".deb")
+        ) if os.path.isdir(os.path.join(tmp, "debs")) else []
+        if debs:
+            subprocess.run(["apt-get", "install", "-y", *debs], check=True,
+                           env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
+        script = os.path.join(tmp, "apply.sh")
+        if os.path.exists(script):
+            subprocess.run(["bash", script], cwd=tmp, check=True)
+
+
+def staged_versions():
+    root = os.path.join(STATE, "staged")
+    if not os.path.isdir(root):
+        return []
+    return sorted((v for v in os.listdir(root)
+                   if os.path.exists(os.path.join(root, v, "release.json"))),
+                  key=version_key)
+
+
+def cmd_apply():
+    applied = False
+    for ver in staged_versions():
+        if version_key(ver) <= version_key(current_version()):
+            shutil.rmtree(os.path.join(STATE, "staged", ver))
+            continue
+        folder = os.path.join(STATE, "staged", ver)
+        with open(os.path.join(folder, "release.json")) as f:
+            rel = json.load(f)
+        log(f"installing {ver}")
+        snapshot(ver)
+        for f in rel.get("files", []):
+            name = safe_name(f if isinstance(f, str) else f["name"])
+            if name.endswith((".tar.gz", ".tgz")):
+                apply_bundle(os.path.join(folder, name))
+        # Only bump the version after everything worked; on failure the
+        # exception stops here, so the release stays staged for next time.
+        set_version(ver)
+        shutil.rmtree(folder)
+        applied = True
+        log(f"now on {ver}")
+    if applied:
+        try:
+            cmd_checkin()
+        except Exception as e:  # offline at shutdown is fine
+            log(f"checkin skipped: {e}")
+    return 0
+
+
+# ---------- checkin ----------
+
+def cmd_checkin():
+    server, channel = config()
+    body = {"device": device_id(), "version": current_version(), "channel": channel}
+    with request(server, "/api/os/checkin", data=body):
+        pass
+    log(f"checked in as {body['device']} ({body['version']}, {channel})")
+    return 0
+
+
+COMMANDS = {"check": cmd_check, "apply": cmd_apply, "checkin": cmd_checkin}
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in COMMANDS:
+        print("usage: update check|apply|checkin", file=sys.stderr)
+        return 2
+    try:
+        return COMMANDS[argv[1]]()
+    except urllib.error.HTTPError as e:
+        # 404 also means "this account isn't in the migood-os Beta".
+        log(f"server said {e.code} for {e.url}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

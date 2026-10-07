@@ -1,0 +1,16 @@
+# Installs staged updates while the PC shuts down.
+# The trick: this service "starts" at boot doing nothing, and its ExecStop
+# (which runs at shutdown) is where the real work happens.
+[Unit]
+Description=Migood OS: install staged updates at shutdown
+After=network-online.target local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/lib/migood-os/update apply
+TimeoutStopSec=30min
+
+[Install]
+WantedBy=multi-user.target

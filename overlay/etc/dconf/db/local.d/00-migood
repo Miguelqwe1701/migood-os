@@ -1,0 +1,50 @@
+# Migood OS desktop defaults. Users can still change these; they are only
+# the starting point. Apply changes with: sudo dconf update
+
+[org/gnome/shell]
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
+disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
+favorite-apps=['migood-games.desktop', 'google-chrome.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Yaru-sage-dark'
+icon-theme='Yaru-sage'
+font-name='Nunito 11'
+document-font-name='Nunito 11'
+clock-format='12h'
+
+[org/gnome/desktop/background]
+picture-uri='file:///usr/share/backgrounds/migood/default.png'
+picture-uri-dark='file:///usr/share/backgrounds/migood/default.png'
+picture-options='zoom'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file:///usr/share/backgrounds/migood/default.png'
+
+[org/gnome/desktop/wm/preferences]
+button-layout='appmenu:minimize,maximize,close'
+
+# Shelf: Dash to Panel at the bottom, like the Migood app's taskbar.
+[org/gnome/shell/extensions/dash-to-panel]
+panel-positions='{"0":"BOTTOM"}'
+panel-sizes='{"0":48}'
+appicon-margin=4
+appicon-padding=6
+trans-use-custom-bg=true
+trans-bg-color='#0a0d12'
+trans-use-custom-opacity=true
+trans-panel-opacity=0.85
+dot-style-focused='METRO'
+dot-style-unfocused='DOTS'
+dot-color-override=true
+dot-color-1='#2ecc71'
+show-activities-button=false
+show-showdesktop-button=false
+
+# Launcher: ArcMenu full-screen grid, Migood logo as the button.
+[org/gnome/shell/extensions/arcmenu]
+menu-layout='Chromebook'
+menu-button-appearance='Icon'
+custom-menu-button-icon='/usr/share/migood-os/migood-launcher.svg'
+menu-button-icon='Custom_Icon'
