@@ -57,5 +57,24 @@ class MakeBundle(unittest.TestCase):
             self.assertIn("InitialSetupEnable=false", f.read())
 
 
+@unittest.skipUnless(have_tags() and subprocess.run(
+    ["git", "rev-parse", "-q", "--verify", "v0.1.2^{commit}"], cwd=REPO,
+    capture_output=True).returncode == 0, "needs git tag v0.1.2")
+class BuildChangeWarning(unittest.TestCase):
+    """0.1.2 changed customize.sh with no bundles/0.1.2/extra.sh: warn.
+    0.1.1 has its extra.sh: no warning."""
+
+    def run_bundle(self, old, new):
+        with tempfile.TemporaryDirectory() as out:
+            return subprocess.run(["bash", "tools/make-bundle.sh", old, new], cwd=REPO, check=True,
+                                  env={**os.environ, "OUT": out}, capture_output=True, text=True).stdout
+
+    def test_warns_without_extra(self):
+        self.assertIn("WARNING", self.run_bundle("0.1.1", "0.1.2"))
+
+    def test_quiet_with_extra(self):
+        self.assertNotIn("WARNING", self.run_bundle("0.1.0", "0.1.1"))
+
+
 if __name__ == "__main__":
     unittest.main()

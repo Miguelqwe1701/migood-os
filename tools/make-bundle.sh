@@ -58,3 +58,15 @@ tar -czf "$OUT/$NAME" -C "$STAGE" --owner=0 --group=0 .
 echo "Made $OUT/$NAME ($FROM -> $TO). Inside:"
 tar -tzf "$OUT/$NAME" | grep -v '/$' | sed 's#^\./#  #'
 echo "sha256: $(cut -d' ' -f1 "$OUT/$NAME.sha256")  size: $(stat -c %s "$OUT/$NAME") bytes"
+
+# Changes to how the image is built (customize.sh, build-iso.sh) never reach
+# PCs that are already installed unless bundles/<version>/extra.sh repeats
+# them. Warn when that file is missing, so it isn't forgotten.
+BUILD_CHANGES="$(git diff --name-only "v$FROM" "$NEW" -- cubic/ build/build-iso.sh)"
+if [ -n "$BUILD_CHANGES" ] && [ ! -f "$EXTRA/extra.sh" ]; then
+  msg="The build scripts changed since $FROM, but there is no $EXTRA/extra.sh. Installed PCs won't get those changes from this update. Changed: $(echo $BUILD_CHANGES)"
+  echo "WARNING: $msg"
+  # Shows as a yellow warning on the GitHub Actions run page.
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning title=Update bundle::$msg"
+fi
+exit 0
