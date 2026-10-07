@@ -122,8 +122,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          APP="$(cat work/migood-games.version 2>/dev/null || echo unknown)"
           cat > notes.md <<EOF
           Migood OS $VERSION (based on Ubuntu 24.04), beta build.
+          Comes with the Migood Games app **$APP**.
 
           **Download:** grab the \`.iso\` and write it to a USB stick with
           [balenaEtcher](https://etcher.balena.io/) or Rufus, or boot it in a VM.

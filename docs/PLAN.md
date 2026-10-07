@@ -95,7 +95,7 @@ pushed to `claude/festive-noether-nzd8nt`, which is PR #1 and not merged yet. St
 | 15 | Game Mode | 🟡 installed; on for games that request it |
 | 16 | Emulators (no games) | ✅ RetroArch, Dolphin, PPSSPP |
 | 17 | "Play on My PC" tiles | 🌐 |
-| 18 | Wake your PC | 🌐 Linux version of wake.js (rtcwake service) |
+| 18 | Wake your PC | ✅ migood-sleepd + system-sleep hook + migood-cli (app side: mainsite) |
 | 19 | FPS overlay toggle | ✅ Settings → Gaming |
 | 20 | Cloud saves | 🌐 |
 | 21 | Migood notifications | 🟡 through the Migood Games app |

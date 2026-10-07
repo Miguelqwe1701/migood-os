@@ -153,7 +153,8 @@ cp "$ASSETS"/fonts/Nunito-*.ttf "$ASSETS/fonts/OFL.txt" /usr/share/fonts/truetyp
 
 say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
-chmod 755 /usr/lib/migood-os/update
+chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
+  /usr/lib/systemd/system-sleep/migood
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
 install -d /usr/share/migood-os /usr/share/backgrounds/migood
@@ -173,7 +174,7 @@ rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
-  migood-battery-limit.service
+  migood-battery-limit.service migood-sleepd.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 # Overlay schema overrides (e.g. the login screen's Migood logo) take effect
 # only once compiled.
@@ -257,6 +258,8 @@ APP_TGZ="$(ls "$ASSETS"/migood-games-*.tar.gz 2>/dev/null | sort -V | tail -1 ||
 if [ -n "$APP_TGZ" ]; then
   rm -rf /opt/migood-games && install -d /opt/migood-games
   tar -xzf "$APP_TGZ" -C /opt/migood-games --strip-components=1
+  # e.g. migood-games-3.9.1.tar.gz -> 3.9.1 (release notes, Settings -> About).
+  basename "$APP_TGZ" .tar.gz | sed 's/^migood-games-//' > /usr/share/migood-os/migood-games.version
   BIN="$(find /opt/migood-games -maxdepth 1 -type f -executable -name 'migood*' | head -1)"
   # Electron's sandbox helper must be owned by root with the setuid bit.
   [ -f /opt/migood-games/chrome-sandbox ] && chown root:root /opt/migood-games/chrome-sandbox \

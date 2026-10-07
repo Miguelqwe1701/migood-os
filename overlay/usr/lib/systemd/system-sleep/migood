@@ -1,0 +1,6 @@
+#!/bin/sh
+# systemd runs this around every sleep: $1 = pre (going to sleep) or post (woke up).
+# After waking, tell migood-sleepd; it decides if this was a Migood check-in.
+case "$1" in
+  post) /usr/bin/migood-cli resumed >/dev/null 2>&1 || true ;;
+esac
