@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""migood-cli: talk to Migood OS's sleep & wake service (migood-sleepd).
+
+  migood-cli status              is a sleep cycle on? last check-in? battery?
+  migood-cli sleep [--every N]   start sleeping; the wake ticket is read from
+                                 standard input, never from the command line
+                                 (other people could see it with `ps`):
+                                   echo "$TICKET" | migood-cli sleep --every 5
+  migood-cli cancel              stop the sleep cycle
+  migood-cli wake-check          (root) ask the server now if someone wants
+                                 this PC awake: POST /api/remote/wake/check
+  migood-cli resumed             (root) used by the system-sleep hook
+
+Prints the service's JSON answer. Exit code 0 when it says "ok".
+"""
+import json
+import os
+import socket
+import sys
+
+SOCK = os.environ.get("MIGOOD_SLEEPD_SOCK", "/run/migood/sleepd.sock")
+
+
+def ask(req):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(20)
+    try:
+        s.connect(SOCK)
+    except OSError as e:
+        return {"ok": False, "error": f"migood-sleepd isn't running ({e.strerror})"}
+    with s:
+        f = s.makefile("rwb")
+        f.write(json.dumps(req).encode() + b"\n")
+        f.flush()
+        line = f.readline()
+    return json.loads(line) if line else {"ok": False, "error": "no answer"}
+
+
+def wake_check():
+    """Root only: reads the ticket from the service's own file."""
+    sys.path.insert(0, "/usr/lib/migood-os")
+    import migoodlib
+    state = os.path.join(os.environ.get("MIGOOD_STATE", "/var/lib/migood-os"), "wake.json")
+    try:
+        with open(state) as f:
+            token = json.load(f)["token"]
+    except (OSError, ValueError, KeyError):
+        return {"ok": False, "error": "not sleeping (no wake ticket)"}
+    try:
+        return {"ok": True, **migoodlib.api("/api/remote/wake/check", {"token": token}, timeout=15)}
+    except RuntimeError as e:
+        return {"ok": False, "error": str(e)}
+
+
+def main(argv):
+    cmd = argv[0] if argv else "status"
+    if cmd == "sleep":
+        every = 5
+        if "--every" in argv:
+            every = int(argv[argv.index("--every") + 1])
+        token = sys.stdin.readline().strip()
+        ans = ask({"cmd": "sleep", "token": token, "every": every})
+    elif cmd in ("status", "cancel", "resumed"):
+        ans = ask({"cmd": cmd})
+    elif cmd == "wake-check":
+        ans = wake_check()
+    else:
+        print(__doc__)
+        return 2
+    print(json.dumps(ans))
+    return 0 if ans.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

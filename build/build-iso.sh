@@ -111,11 +111,17 @@ EOF
 
 say "3. Make it Migood OS (cubic/customize.sh)"
 add_host_cas
-bash "$REPO/build/fetch-assets.sh" || true
+# 0 = new app ok, 2 = no server answered (keep the app already in the image),
+# 1 = the download didn't match linux.json's size/sha256: stop the build.
+rc=0; bash "$REPO/build/fetch-assets.sh" || rc=$?
+[ "$rc" = 1 ] && { echo "!! Migood Games download failed its check, not building"; exit 1; }
 rm -rf "$CH/root/migood-os" && mkdir -p "$CH/root/migood-os"
 cp -r "$REPO/cubic" "$REPO/overlay" "$REPO/assets" "$CH/root/migood-os/"
 in_chroot env VERSION="$VERSION" BROWSER="${BROWSER:-chromium}" \
   bash /root/migood-os/cubic/customize.sh
+# Which Migood Games app the image carries (for the release notes).
+cp "$CH/usr/share/migood-os/migood-games.version" "$WORK/migood-games.version" 2>/dev/null \
+  || echo unknown > "$WORK/migood-games.version"
 rm -rf "$CH/root/migood-os"
 in_chroot update-initramfs -u -k all >/dev/null
 

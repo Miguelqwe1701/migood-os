@@ -1,0 +1,16 @@
+[Unit]
+Description=Migood OS: sleep & wake from anywhere
+After=network.target
+
+[Service]
+ExecStart=/usr/lib/migood-os/migood-sleepd
+# If it stops or crashes (even mid check-in): apps thawed, screen on.
+ExecStopPost=/usr/lib/migood-os/migood-sleepd --rescue
+Restart=always
+RestartSec=2
+RuntimeDirectory=migood
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=multi-user.target
