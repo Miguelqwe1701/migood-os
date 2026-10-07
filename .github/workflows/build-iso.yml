@@ -85,6 +85,9 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           sudo --preserve-env=VERSION,BASE_ISO bash build/build-iso.sh
           rm -f base/base.iso
+          # The build ran as root, so out/ belongs to root; the next steps run
+          # as the normal runner user and must be able to write there (split).
+          sudo chown -R "$(id -u):$(id -g)" out
 
       - name: Split if over GitHub's 2 GB per-file limit
         run: |
