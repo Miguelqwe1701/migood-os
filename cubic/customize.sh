@@ -152,7 +152,14 @@ echo "Migood OS $VERSION \\n \\l" > /etc/issue
 echo "Migood OS $VERSION" > /etc/issue.net
 
 say "9/10 Remove Ubuntu branding + Migood boot logo"
-apt-get purge -y 'ubuntu-wallpapers*' >/dev/null 2>&1 || true
+# Ubuntu's wallpapers can't be uninstalled (GNOME depends on that package and
+# would be removed with it), so tell dpkg never to put those files on disk.
+cat > /etc/dpkg/dpkg.cfg.d/migood-no-ubuntu-wallpapers <<'EOF'
+path-exclude=/usr/share/backgrounds/*
+path-exclude=/usr/share/gnome-background-properties/*ubuntu*
+EOF
+find /usr/share/backgrounds -mindepth 1 -maxdepth 1 ! -name migood -exec rm -rf {} +
+rm -f /usr/share/gnome-background-properties/*ubuntu*
 if [ -f "$ASSETS/migood-square.png" ]; then
   T=/usr/share/plymouth/themes/migood
   rm -rf "$T" && cp -r /usr/share/plymouth/themes/spinner "$T"
@@ -192,6 +199,13 @@ else
 fi
 
 apt-get autoremove -y >/dev/null && apt-get clean
+
+# Safety check: the desktop must still be there (an earlier version removed
+# GNOME by accident and still "succeeded").
+for p in gnome-shell gdm3 ubuntu-session; do
+  dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" \
+    || { echo "!! $p is missing, the desktop would be broken. Stopping."; exit 1; }
+done
 say "Done. Migood OS $VERSION customized."
 if [ ${#WARNINGS[@]} -gt 0 ]; then
   printf '\033[1;33mWarnings (%d):\033[0m\n' "${#WARNINGS[@]}"
