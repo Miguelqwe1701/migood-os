@@ -33,8 +33,27 @@ unmounts() {
   for d in dev/pts dev sys proc; do mountpoint -q "$CH/$d" && umount -l "$CH/$d"; done; true
 }
 trap unmounts EXIT
+# Passes the host's proxy setting through, if it has one (corporate networks,
+# cloud sandboxes); on a normal machine these are empty and do nothing.
 in_chroot() { chroot "$CH" /usr/bin/env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-  DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 "$@"; }
+  DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 \
+  ${HTTPS_PROXY:+HTTPS_PROXY=$HTTPS_PROXY https_proxy=$HTTPS_PROXY} "$@"; }
+
+# If the host trusts extra certificates (e.g. a proxy that inspects HTTPS),
+# the chroot needs them too while downloading. They're removed before packing
+# so they never end up in the ISO.
+EXTRA_CA=/usr/local/share/ca-certificates
+add_host_cas() {
+  ls "$EXTRA_CA"/*.crt >/dev/null 2>&1 || return 0
+  mkdir -p "$CH$EXTRA_CA/build-host"
+  cp "$EXTRA_CA"/*.crt "$CH$EXTRA_CA/build-host/"
+  in_chroot update-ca-certificates >/dev/null 2>&1 || true
+}
+remove_host_cas() {
+  [ -d "$CH$EXTRA_CA/build-host" ] || return 0
+  rm -rf "$CH$EXTRA_CA/build-host"
+  in_chroot update-ca-certificates --fresh >/dev/null 2>&1 || true
+}
 
 say "Build tools"
 apt-get update -q
@@ -75,15 +94,17 @@ export FLAVOUR="Migood OS"
 EOF
 
 say "3. Make it Migood OS (cubic/customize.sh)"
+add_host_cas
 bash "$REPO/build/fetch-assets.sh" || true
 rm -rf "$CH/root/migood-os" && mkdir -p "$CH/root/migood-os"
 cp -r "$REPO/cubic" "$REPO/overlay" "$REPO/assets" "$CH/root/migood-os/"
-in_chroot env VERSION="$VERSION" BROWSER="${BROWSER:-chrome}" \
+in_chroot env VERSION="$VERSION" BROWSER="${BROWSER:-chromium}" \
   bash /root/migood-os/cubic/customize.sh
 rm -rf "$CH/root/migood-os"
 in_chroot update-initramfs -u -k all >/dev/null
 
 say "4. Pack the ISO"
+remove_host_cas
 rm -f "$CH/usr/sbin/policy-rc.d" "$CH/etc/resolv.conf"
 in_chroot apt-get clean
 rm -rf "$CH"/tmp/* "$CH"/var/lib/apt/lists/*
