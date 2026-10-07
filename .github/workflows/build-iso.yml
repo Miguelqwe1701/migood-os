@@ -104,6 +104,8 @@ jobs:
           if [ "$(stat -c %s "$ISO")" -gt 2000000000 ]; then
             split -b 1900M -d "$ISO" "$ISO.part"
             rm "$ISO"
+            # The scripts that join the parts again go on the release too.
+            cp ../tools/merge-iso.sh ../tools/merge-iso.ps1 ../tools/merge-iso.bat .
           fi
           ls -lh
 
@@ -118,12 +120,14 @@ jobs:
           **Download:** grab the \`.iso\` and write it to a USB stick with
           [balenaEtcher](https://etcher.balena.io/) or Rufus, or boot it in a VM.
 
-          If the ISO came in parts (\`.iso.part00\`, \`.part01\`, ...), download
-          all of them and join them first:
-          - Windows (cmd): \`copy /b migood-os-$VERSION.iso.part00 + migood-os-$VERSION.iso.part01 migood-os-$VERSION.iso\`
-          - Linux/macOS: \`cat migood-os-$VERSION.iso.part* > migood-os-$VERSION.iso\`
+          GitHub allows files up to 2 GB, so the ISO comes in parts
+          (\`.iso.part00\`, \`.part01\`, ...). Download **all the parts**, the
+          \`.sha256\` file and the merge script into one folder, then:
+          - **Windows:** double-click \`merge-iso.bat\` (keep \`merge-iso.ps1\` next to it)
+          - **Linux / macOS:** \`bash merge-iso.sh\`
 
-          Check it with the \`.sha256\` file.
+          It joins the parts into \`migood-os-$VERSION.iso\` and checks it with the
+          \`.sha256\` file. In a Codespace, \`bash vm/start.sh\` does all of this for you.
           EOF
           cp docs/screenshots/*.png out/ 2>/dev/null || true
           gh release create "v$VERSION" out/* \
