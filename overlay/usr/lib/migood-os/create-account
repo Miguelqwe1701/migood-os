@@ -171,14 +171,27 @@ def begin():
     set_autologin("migood-setup")
 
 
+def ensure_guest():
+    """The Guest account (no password, not an admin; its home is wiped at
+    sign-out by guest-session). Made here, on an installed PC, and never in
+    the image: the live USB needs user number 1000 for its own live user."""
+    try:
+        pwd.getpwnam("guest")
+    except KeyError:
+        subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", "Guest", "guest"], check=True)
+    subprocess.run(["passwd", "-d", "guest"], check=True, stdout=subprocess.DEVNULL)
+
+
 def guest_once():
     if os.path.exists(DONE):
         fail("Setup is already finished on this computer.")
+    ensure_guest()
     set_autologin("guest")  # firstboot points it back at setup next start-up
 
 
 def finish():
     os.makedirs(STATE, exist_ok=True)
+    ensure_guest()
     open(DONE, "w").close()
     set_autologin(None)  # next time: the normal login screen
     subprocess.run(["systemctl", "start", "--no-block", "migood-os-update.service"])

@@ -5,3 +5,6 @@ path-exclude=/usr/share/applications/update-manager.desktop
 path-exclude=/etc/xdg/autostart/update-notifier.desktop
 # Calamares' generic "Install System" menu entry ("Install Migood OS" is ours).
 path-exclude=/usr/share/applications/calamares.desktop
+# Ubuntu's "Welcome to Ubuntu" first-login wizard (Migood setup replaces it).
+path-exclude=/etc/xdg/autostart/gnome-initial-setup-first-login.desktop
+path-exclude=/etc/xdg/autostart/gnome-initial-setup-copy-worker.desktop

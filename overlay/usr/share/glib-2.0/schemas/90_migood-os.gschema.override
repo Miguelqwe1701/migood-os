@@ -1,0 +1,6 @@
+# Migood OS defaults that must beat Ubuntu's own (10_ubuntu-settings.gschema.override).
+# Higher number = wins. Compiled by customize.sh (glib-compile-schemas).
+
+# Login screen: Migood logo at the bottom instead of the Ubuntu logo.
+[org.gnome.login-screen]
+logo='/usr/share/migood-os/migood-logo.png'

@@ -1,0 +1,6 @@
+# Let NetworkManager handle ALL networking (cable and Wi-Fi), like Ubuntu
+# Desktop does. Without this file NetworkManager ignores wired connections,
+# so a PC or VM on a cable had no internet.
+network:
+  version: 2
+  renderer: NetworkManager
