@@ -289,12 +289,33 @@ def verify():
     return None
 
 
+def is_mount(path):
+    return os.path.ismount(path)
+
+
+def root_ready():
+    """True if Calamares partitioned and mounted a real disk at rootMountPoint."""
+    root = gs_get("rootMountPoint")
+    if not root or not os.path.isdir(root) or not is_mount(root):
+        return False
+    partitions = gs_get("partitions")
+    if partitions is not None:
+        if not any(isinstance(p, dict) and p.get("mountPoint") == "/" for p in partitions):
+            return False
+    return True
+
+
 def repair():
+    if not root_ready():
+        return ("Couldn't install Migood OS",
+                "The target disk wasn't set up for installation (no '/' partition was mounted). "
+                "Start the installer again and choose <b>Erase disk</b> or "
+                "<b>Replace a partition</b>." + LOG_HINT)
     if not gs_get("migoodNeedsRepair"):
         return None
     info = gs_get("migoodSquash") or {}
     root = gs_get("rootMountPoint")
-    if not root or not info.get("name") or not info.get("sha"):
+    if not info.get("name") or not info.get("sha"):
         return ("Couldn't install Migood OS",
                 "The new disk wasn't ready for the download (no mount point)." + LOG_HINT)
     dest = os.path.join(root, DOWNLOAD)
@@ -369,7 +390,10 @@ def cli_check():
     return 0 if status == "ok" else 1
 
 
-if __name__ == "__main__":
+# Note: Calamares' PyBind11 loader executes main.py with __name__ == "__main__"
+# and sys.argv == ["calamares", "-D6"], so only exit when --check or --skip is
+# explicitly passed on the command line outside Calamares.
+if __name__ == "__main__" and libcalamares is None:
     if sys.argv[1:2] == ["--check"]:
         sys.exit(cli_check())
     if sys.argv[1:2] == ["--skip"]:
@@ -377,5 +401,3 @@ if __name__ == "__main__":
         if sha:
             write_result(sha, "skipped")
         sys.exit(0)
-    print("usage: main.py --check | --skip", file=sys.stderr)
-    sys.exit(2)

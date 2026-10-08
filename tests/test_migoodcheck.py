@@ -90,7 +90,9 @@ class MigoodCheck(unittest.TestCase):
         spec.loader.exec_module(self.m)
         self.mounts = []
         self.m.run_cmd = lambda *cmd: self.mounts.append(cmd)  # no real mounting in tests
+        self.m.is_mount = lambda p: True
         self.store["rootMountPoint"] = self.root
+        self.store["partitions"] = [{"mountPoint": "/", "device": "/dev/nvme0n1p2"}]
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -170,6 +172,27 @@ class MigoodCheck(unittest.TestCase):
         self.step("verify")
         self.store["rootMountPoint"] = None
         self.assertEqual(self.step("repair")[0], "Couldn't install Migood OS")
+
+    def test_repair_stops_if_root_partition_was_not_mounted(self):
+        self.stick(GOOD)
+        self.assertIsNone(self.step("verify"))
+        # Even when the stick is fine, if '/' wasn't created or mounted, stop
+        # before unpackfs can unpack 4 GB into /tmp in RAM.
+        self.store["partitions"] = [{"mountPoint": "/boot/efi", "device": "/dev/nvme0n1p1"}]
+        self.assertEqual(self.step("repair")[0], "Couldn't install Migood OS")
+        self.store["partitions"] = [{"mountPoint": "/", "device": "/dev/nvme0n1p2"}]
+        self.m.is_mount = lambda p: False
+        self.assertEqual(self.step("repair")[0], "Couldn't install Migood OS")
+
+    def test_pybind11_eval_as_main_does_not_exit(self):
+        import runpy
+        old_argv = sys.argv[:]
+        try:
+            sys.argv = ["calamares", "-D6"]
+            ns = runpy.run_path(MODULE, run_name="__main__")
+            self.assertIn("run", ns)
+        finally:
+            sys.argv = old_argv
 
     def test_command_line_check(self):
         self.lib.job.configuration = {}
