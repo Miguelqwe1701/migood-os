@@ -66,6 +66,8 @@ fi
 # No automatic opening of disks while installing.
 gsettings set org.gnome.desktop.media-handling automount false 2>/dev/null
 sudo -n sh -c '
+  # Make sure /dev/disk/by-id exists (Ubuntu calamares bootloader checks it).
+  mkdir -p /dev/disk/by-id
   # Swap on a real disk keeps that disk busy (zram is in memory: keep it).
   swapon --noheadings --show=NAME 2>/dev/null | grep -v "^/dev/zram" | xargs -r swapoff 2>/dev/null
   # Disks the desktop opened (Files app) are busy too. Paths in /proc/mounts
