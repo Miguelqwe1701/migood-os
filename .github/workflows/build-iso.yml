@@ -56,7 +56,7 @@ jobs:
       - name: Script syntax
         run: |
           bash -n cubic/customize.sh && bash -n build/build-iso.sh
-          bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh
+          bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh && bash -n build/check-iso.sh
           python3 -m py_compile tools/publish-os.py
 
   iso:
@@ -92,6 +92,11 @@ jobs:
           else
             mv migood-os-*.iso base.iso
           fi
+          # Never build on top of a broken ISO: then build from scratch instead.
+          if ! sudo bash ../build/check-iso.sh base.iso; then
+            echo "::warning title=Base ISO::$TAG's ISO failed the check; building from scratch"
+            rm -f base.iso; exit 0
+          fi
           echo "Starting from $TAG"
           echo "BASE_ISO=$PWD/base.iso" >> "$GITHUB_ENV"
 
@@ -104,6 +109,9 @@ jobs:
           # The build ran as root, so out/ belongs to root; the next steps run
           # as the normal runner user and must be able to write there (split).
           sudo chown -R "$(id -u):$(id -g)" out
+
+      - name: Check the new ISO (every file in it must read back)
+        run: sudo bash build/check-iso.sh "out/migood-os-$VERSION.iso"
 
       - name: Update bundle (for PCs already running the previous version)
         env:
@@ -164,6 +172,10 @@ jobs:
           ISO="full/migood-os-$VERSION.iso"; [ -f "$ISO" ] || ISO="out/migood-os-$VERSION.iso"
           FILES=("$ISO")
           [ -f "out/migood-os-$VERSION-update.tar.gz" ] && FILES+=("out/migood-os-$VERSION-update.tar.gz")
+          # The system file by itself: the installer downloads it when a USB stick
+          # is damaged. (work/ belongs to root: link it, don't copy 4 GB.)
+          SQ="full/migood-os-$VERSION-filesystem.squashfs"
+          mkdir -p full && sudo ln -f work/iso/casper/filesystem.squashfs "$SQ" && FILES+=("$SQ")
           APP="$(cat work/migood-games.version 2>/dev/null || true)"
           [ "$APP" = unknown ] && APP=""
           # Short notes for the PCs' Migood Updates app (not the GitHub download help).

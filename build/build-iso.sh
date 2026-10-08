@@ -61,7 +61,7 @@ remove_host_cas() {
 say "Build tools"
 apt-get update -q
 apt-get install -y -q debootstrap squashfs-tools xorriso grub-pc-bin \
-  grub-efi-amd64-bin grub-common mtools dosfstools >/dev/null
+  grub-efi-amd64-bin grub-common mtools dosfstools squashfs-tools-ng >/dev/null
 
 if [ -n "${BASE_ISO:-}" ]; then
   say "1. Start from $BASE_ISO"
@@ -141,6 +141,10 @@ chroot "$CH" dpkg-query -W --showformat='${Package} ${Version}\n' > "$ISO/casper
 du -sx --block-size=1 "$CH" | cut -f1 > "$ISO/casper/filesystem.size"
 mksquashfs "$CH" "$ISO/casper/filesystem.squashfs" -noappend -comp zstd \
   -e boot/vmlinuz boot/initrd.img >/dev/null
+# Its fingerprint, so the installer can tell a damaged USB stick and download
+# a good copy (named like this on the Migood server) instead.
+(cd "$ISO/casper" && echo "$(sha256sum filesystem.squashfs | cut -d' ' -f1)  migood-os-$VERSION-filesystem.squashfs" \
+  > filesystem.squashfs.sha256)
 mkdir -p "$ISO/.disk"
 echo "Migood OS $VERSION (based on Ubuntu 24.04)" > "$ISO/.disk/info"
 
@@ -159,6 +163,8 @@ menuentry "Try Migood OS $VERSION (safe graphics)" {
 EOF
 # grub-mkrescue makes one ISO that boots on old BIOS PCs and on UEFI PCs.
 NAME="migood-os-$VERSION.iso"
-grub-mkrescue -o "$OUT/$NAME" "$ISO" -- -volid "MIGOOD_OS" >/dev/null 2>&1
+# iso_9660_level=3: files over 4 GiB are allowed (the system file is ~4.2 GB
+# and growing; without it the end of the file would be lost).
+grub-mkrescue -o "$OUT/$NAME" "$ISO" -- -volid "MIGOOD_OS" -compliance iso_9660_level=3 >/dev/null 2>&1
 (cd "$OUT" && sha256sum "$NAME" > "$NAME.sha256")
 say "Done: $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f1))"

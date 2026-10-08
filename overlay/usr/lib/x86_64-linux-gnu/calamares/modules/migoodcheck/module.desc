@@ -1,0 +1,7 @@
+# Migood OS: check the USB stick's system file before installing, and fetch a
+# good copy over the internet when it's damaged. See main.py.
+---
+type:       "job"
+name:       "migoodcheck"
+interface:  "python"
+script:     "main.py"

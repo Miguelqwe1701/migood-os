@@ -235,8 +235,8 @@ def cmd_check():
             if isinstance(f, str):
                 f = {"name": f}
             name = safe_name(f["name"])
-            if name.endswith(".iso"):
-                continue  # ISOs are for fresh installs, not updates
+            if name.endswith((".iso", ".squashfs")):
+                continue  # ISOs (and the installer's spare system file) are for fresh installs
             dest = os.path.join(folder, name)
             if os.path.exists(dest) and sha256_of(dest) == f.get("sha256"):
                 continue  # already downloaded and verified
