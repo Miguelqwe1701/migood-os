@@ -141,6 +141,10 @@ chroot "$CH" dpkg-query -W --showformat='${Package} ${Version}\n' > "$ISO/casper
 du -sx --block-size=1 "$CH" | cut -f1 > "$ISO/casper/filesystem.size"
 mksquashfs "$CH" "$ISO/casper/filesystem.squashfs" -noappend -comp zstd \
   -e boot/vmlinuz boot/initrd.img >/dev/null
+# Its fingerprint, so the installer can tell a damaged USB stick and download
+# a good copy (named like this on the Migood server) instead.
+(cd "$ISO/casper" && echo "$(sha256sum filesystem.squashfs | cut -d' ' -f1)  migood-os-$VERSION-filesystem.squashfs" \
+  > filesystem.squashfs.sha256)
 mkdir -p "$ISO/.disk"
 echo "Migood OS $VERSION (based on Ubuntu 24.04)" > "$ISO/.disk/info"
 

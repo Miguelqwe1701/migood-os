@@ -164,6 +164,10 @@ jobs:
           ISO="full/migood-os-$VERSION.iso"; [ -f "$ISO" ] || ISO="out/migood-os-$VERSION.iso"
           FILES=("$ISO")
           [ -f "out/migood-os-$VERSION-update.tar.gz" ] && FILES+=("out/migood-os-$VERSION-update.tar.gz")
+          # The system file by itself: the installer downloads it when a USB stick
+          # is damaged. (work/ belongs to root: link it, don't copy 4 GB.)
+          SQ="full/migood-os-$VERSION-filesystem.squashfs"
+          mkdir -p full && sudo ln -f work/iso/casper/filesystem.squashfs "$SQ" && FILES+=("$SQ")
           APP="$(cat work/migood-games.version 2>/dev/null || true)"
           [ "$APP" = unknown ] && APP=""
           # Short notes for the PCs' Migood Updates app (not the GitHub download help).
