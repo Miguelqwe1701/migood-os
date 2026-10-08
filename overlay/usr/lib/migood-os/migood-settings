@@ -129,6 +129,17 @@ class Settings(Adw.PreferencesWindow):
                                  active=os.path.exists(MANGOHUD))
         self.hud.connect("notify::active", lambda *_: self.set_hud())
         gaming.add(self.hud)
+        # Fans (migood-fan.service): quiet while calm, full speed for games.
+        self.fan_modes = ["auto", "quiet", "balanced", "performance"]
+        self.fan = Adw.ComboRow(
+            title="Fans",
+            subtitle="Automatic keeps gaming laptops quiet until a game or app needs the power",
+            model=Gtk.StringList.new(["Automatic", "Quiet", "Balanced", "Performance"]))
+        cur = self.fan_mode()
+        self.fan.set_selected(self.fan_modes.index(cur) if cur in self.fan_modes else 0)
+        self.fan.connect("notify::selected", lambda *_: subprocess.run(
+            ["pkexec", CONFIG, "fan", self.fan_modes[self.fan.get_selected()]]))
+        gaming.add(self.fan)
         page.add(gaming)
 
         # --- Battery (only if the laptop supports a charge limit) ---
@@ -181,6 +192,16 @@ class Settings(Adw.PreferencesWindow):
                 return int(f.read().strip()) <= 80
         except (OSError, ValueError, IndexError):
             return False
+
+    def fan_mode(self):
+        try:
+            with open("/etc/migood-os/fan.conf") as f:
+                for line in f:
+                    if line.startswith("MODE="):
+                        return line.strip().split("=", 1)[1].strip('"')
+        except OSError:
+            pass
+        return "auto"
 
     def save_channel(self):
         ch = "beta" if self.channel.get_selected() == 1 else "stable"
