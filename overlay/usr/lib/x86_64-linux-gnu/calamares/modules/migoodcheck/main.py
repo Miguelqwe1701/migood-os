@@ -369,24 +369,31 @@ def run():
 
 # --- command line: the check with a progress bar, before Calamares ----------
 
+def safe_print(s):
+    try:
+        print(s, flush=True)
+    except (BrokenPipeError, OSError):
+        pass
+
+
 def cli_check():
     """Prints 0..100 lines (for `zenity --progress`), then saves the result.
     Exit code: 0 good / no fingerprint, 1 damaged."""
     sha, _ = expected()
     if not sha:
-        print("100", flush=True)
+        safe_print("100")
         return 0
     status = read_result(sha)
     if status in ("ok", "skipped"):
-        print("100", flush=True)
+        safe_print("100")
         return 0
     if status != "damaged":
         squash, _ = paths()
-        print("# Checking the USB stick (you can skip this)...", flush=True)
-        ok = file_ok(squash, sha, lambda f: print(int(f * 99), flush=True))
+        safe_print("# Checking the USB stick (you can skip this)...")
+        ok = file_ok(squash, sha, lambda f: safe_print(int(f * 99)))
         status = "ok" if ok else "damaged"
         write_result(sha, status)
-    print("100", flush=True)
+    safe_print("100")
     return 0 if status == "ok" else 1
 
 
