@@ -1,6 +1,106 @@
-#!/bin/sh
+#!/bin/bash
 # Starts the Migood OS installer from the live USB. The live user may use sudo
 # without a password (casper sets that up). The installer runs as root, so it
 # is given access to the screen (XWayland) first.
+#
+# Before Calamares starts:
+#   1. fans go quiet for the whole install (migood-fan hold quiet)
+#   2. the USB stick is checked, in a window with a "Skip check" button
+#      (the answer is saved, so Calamares doesn't check a second time)
+#   3. the disks are made ready: the desktop lets go of disks it opened and
+#      of swap on them. A busy disk is the classic reason Calamares crashes
+#      while partitioning instead of showing an error.
+# After it closes, its log is copied to the desktop, and if it crashed the
+# owner gets a plain message instead of the window just vanishing.
+
+CHECK=/usr/lib/x86_64-linux-gnu/calamares/modules/migoodcheck/main.py
+FAN=/usr/lib/migood-os/migood-fan
+TITLE="Install Migood OS"
+DESKTOP=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
+mkdir -p "$DESKTOP"
+SAVED_LOG="$DESKTOP/migood-installer-log.txt"
+RUN_LOG=$(mktemp /tmp/migood-installer.XXXXXX.log)
+
+have_zenity() { command -v zenity >/dev/null 2>&1; }
+say_error() { have_zenity && zenity --error --title="$TITLE" --width=460 --text="$1" 2>/dev/null; }
+
+# Only one installer at a time (a second one fighting over the disk = crash).
+if pidof calamares >/dev/null 2>&1; then
+  say_error "The installer is already open."
+  exit 0
+fi
+
+# --- 1. quiet fans while installing ---------------------------------------
+[ -f "$FAN" ] && sudo -n python3 "$FAN" hold quiet >/dev/null 2>&1
+
+AUTOMOUNT=$(gsettings get org.gnome.desktop.media-handling automount 2>/dev/null)
+finish() {
+  [ -f "$FAN" ] && sudo -n python3 "$FAN" hold none >/dev/null 2>&1
+  [ -n "$AUTOMOUNT" ] && gsettings set org.gnome.desktop.media-handling automount "$AUTOMOUNT" 2>/dev/null
+  rm -f "$RUN_LOG"
+}
+trap finish EXIT
+
+# --- 2. check the USB stick (skippable) -----------------------------------
+if [ -f "$CHECK" ] && have_zenity; then
+  sudo -n python3 "$CHECK" --check 2>>"$RUN_LOG" \
+    | zenity --progress --title="$TITLE" --width=440 --auto-close --percentage=0 \
+        --text="Checking the USB stick for damage..." --cancel-label="Skip check" 2>/dev/null
+  rc=("${PIPESTATUS[@]}")
+  if [ "${rc[1]}" != 0 ]; then
+    # "Skip check" pressed: remember it, so the installer doesn't check either.
+    sudo -n python3 "$CHECK" --skip 2>>"$RUN_LOG"
+  elif [ "${rc[0]}" = 1 ]; then
+    zenity --question --title="$TITLE" --width=480 \
+      --ok-label="Continue" --cancel-label="Quit" \
+      --text="<b>Part of this USB stick is damaged.</b>
+
+If this PC is connected to Wi-Fi, the installer will download a good copy of the damaged part while it installs.
+
+The best fix is to write the Migood OS file to the stick again (or use another stick)." 2>/dev/null \
+      || exit 0
+  fi
+fi
+
+# --- 3. make the disks ready ----------------------------------------------
+# No automatic opening of disks while installing.
+gsettings set org.gnome.desktop.media-handling automount false 2>/dev/null
+sudo -n sh -c '
+  # Swap on a real disk keeps that disk busy (zram is in memory: keep it).
+  swapon --noheadings --show=NAME 2>/dev/null | grep -v "^/dev/zram" | xargs -r swapoff 2>/dev/null
+  # Disks the desktop opened (Files app) are busy too. Paths in /proc/mounts
+  # have spaces written as \040, printf %b turns them back.
+  awk "\$2 ~ /^\/(run\/)?media\// {print \$2}" /proc/mounts | while read -r m; do
+    m=$(printf "%b" "$m")
+    umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null
+  done
+  # Old LVM volumes on the disk (from another Linux) get switched on at boot.
+  command -v vgchange >/dev/null && vgchange -an >/dev/null 2>&1
+  true
+' 2>>"$RUN_LOG"
+
+# --- 4. the installer -----------------------------------------------------
 xhost +si:localuser:root >/dev/null 2>&1 || true
-exec sudo -E env QT_QPA_PLATFORM=xcb calamares
+sudo -E env QT_QPA_PLATFORM=xcb calamares -D6 >>"$RUN_LOG" 2>&1
+code=$?
+
+# --- 5. keep the log, explain a crash -------------------------------------
+{
+  echo "Migood OS installer log - $(date)"
+  echo "Calamares exit code: $code"
+  echo
+  for f in "$HOME/.cache/calamares/session.log" /root/.cache/calamares/session.log; do
+    sudo -n test -f "$f" && { echo "=== $f"; sudo -n cat "$f"; echo; }
+  done
+  echo "=== output"
+  cat "$RUN_LOG"
+} >"$SAVED_LOG" 2>/dev/null
+
+if [ "$code" -ge 128 ]; then
+  say_error "<b>The installer stopped unexpectedly</b> (code $code).
+
+If it was already partitioning, the disk may be half set up. That's OK: start the installer again and choose <b>Erase disk</b>, it starts fresh.
+
+The installer's log is on the desktop: <b>migood-installer-log.txt</b>. Please send it to Migood support (Settings -> Get help) so this can be fixed."
+fi
+exit 0

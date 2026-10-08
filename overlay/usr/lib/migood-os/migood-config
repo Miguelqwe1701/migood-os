@@ -6,6 +6,8 @@
                                         unlocks THIS account (the one that ran pkexec)
   migood-config channel stable|beta     which Migood OS updates to get
   migood-config battery-limit on|off    stop charging at 80% (if the laptop supports it)
+  migood-config fan auto|quiet|balanced|performance
+                                        how loud the fans may get (migood-fan)
   migood-config powerwash               factory reset at the next start-up: every
                                         account and its files are deleted, then
                                         setup runs again (feature 40)
@@ -25,6 +27,7 @@ from migoodlib import CONF, valid_url  # noqa: E402
 CONF = os.environ.get("MIGOOD_CONF", CONF)
 STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
 BATTERY_CONF = os.environ.get("MIGOOD_BATTERY_CONF", "/etc/migood-os/battery.conf")
+FAN_CONF = os.environ.get("MIGOOD_FAN_CONF", "/etc/migood-os/fan.conf")
 
 
 def fail(msg):
@@ -62,6 +65,17 @@ def battery_limit(state):
     with open(BATTERY_CONF, "w") as f:
         f.write(f"LIMIT={'80' if state == 'on' else '100'}\n")
     subprocess.run(["systemctl", "restart", "migood-battery-limit.service"], check=False)
+
+
+def set_fan(mode):
+    """Fans: auto | quiet | balanced | performance. migood-fan.service reads
+    the file every few seconds, so this takes effect without a restart."""
+    if mode not in ("auto", "quiet", "balanced", "performance"):
+        fail("fan auto, quiet, balanced or performance")
+    os.makedirs(os.path.dirname(FAN_CONF), exist_ok=True)
+    with open(FAN_CONF, "w") as f:
+        f.write(f"# Fans: auto | quiet | balanced | performance (Settings -> Fans).\nMODE={mode}\n")
+    subprocess.run(["systemctl", "start", "migood-fan.service"], check=False)
 
 
 def powerwash():
@@ -105,6 +119,8 @@ if __name__ == "__main__":
         set_channel(args[1])
     elif len(args) == 2 and args[0] == "battery-limit":
         battery_limit(args[1])
+    elif len(args) == 2 and args[0] == "fan":
+        set_fan(args[1])
     elif args == ["powerwash"]:
         powerwash()
     else:

@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Quiet fans on gaming laptops (and every other PC).
+
+Gaming laptops often boot Linux in their loudest fan mode, with the CPU's
+turbo boost always allowed, so the fans blare even when the PC does nothing
+(like while installing). This uses what the Linux kernel already offers:
+
+  1. the laptop's own fan/power mode (ACPI "platform profile": Asus, Lenovo
+     Legion/IdeaPad, HP Omen/Victus, Acer Nitro/Predator, Dell, ...), through
+     power-profiles-daemon when it runs (it's the "Power Mode" in the menu),
+     or written straight to /sys when it doesn't;
+  2. older Asus laptops' "throttle_thermal_policy" / "fan_boost_mode";
+  3. CPU turbo boost: off in Quiet. Turbo is what makes a CPU hot in short
+     bursts, and the hot bursts are what spin the fans up;
+  4. the CPU's energy preference (EPP).
+
+Modes (Settings -> Fans, saved in /etc/migood-os/fan.conf as MODE=...):
+  auto         quiet while the PC is calm; balanced while a core is busy for
+               ~10 seconds (a game, a build); back to quiet after ~30 calm seconds
+  quiet        always quiet (a bit slower)
+  balanced     the laptop's normal mode
+  performance  loudest, fastest
+
+  migood-fan status
+  migood-fan set MODE              apply once (root), doesn't save
+  migood-fan hold quiet|none       the installer: stay quiet until "hold none" (root)
+  migood-fan daemon                what migood-fan.service runs (root)
+"""
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+SYS = os.environ.get("MIGOOD_SYSFS", "/sys")
+PROC = os.environ.get("MIGOOD_PROCFS", "/proc")
+CONF = os.environ.get("MIGOOD_FAN_CONF", "/etc/migood-os/fan.conf")
+HOLD = os.environ.get("MIGOOD_FAN_HOLD", "/run/migood-os/fan-hold")
+MODES = ("auto", "quiet", "balanced", "performance")
+
+# Platform profile names, best first (drivers use different words).
+PROFILE = {"quiet": ["quiet", "low-power", "cool"],
+           "balanced": ["balanced"],
+           "performance": ["performance", "balanced-performance"]}
+PPD = {"quiet": "power-saver", "balanced": "balanced", "performance": "performance"}
+ASUS_POLICY = {"quiet": "2", "balanced": "0", "performance": "1"}  # 2 = silent, 1 = turbo
+EPP = {"quiet": ["power", "balance_power"],
+       "balanced": ["balance_performance"],
+       "performance": ["performance", "balance_performance"]}
+
+# Auto mode: how busy the busiest CPU core must be, and for how many 3 s checks.
+BUSY, CALM = 0.80, 0.40
+UP_CHECKS, DOWN_CHECKS = 3, 10
+INTERVAL = 3
+
+
+def sysfs(*parts):
+    return os.path.join(SYS, *parts)
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def write(path, value):
+    """True if the kernel took the value (missing files are fine: not every PC has them)."""
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "w") as f:
+            f.write(value)
+        return True
+    except OSError:
+        return False
+
+
+def glob_dir(base, prefix):
+    try:
+        return sorted(os.path.join(base, d) for d in os.listdir(base) if d.startswith(prefix))
+    except OSError:
+        return []
+
+
+def ppd_set(name):
+    """Ask power-profiles-daemon (it owns the platform profile when it runs)."""
+    if os.environ.get("MIGOOD_NO_PPD") or not shutil.which("powerprofilesctl"):
+        return False
+    try:
+        return subprocess.run(["powerprofilesctl", "set", name], capture_output=True,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def set_platform_profile(mode):
+    if ppd_set(PPD[mode]):
+        return "power-profiles-daemon: " + PPD[mode]
+    choices = (read(sysfs("firmware/acpi/platform_profile_choices")) or "").split()
+    for name in PROFILE[mode]:
+        if name in choices and write(sysfs("firmware/acpi/platform_profile"), name):
+            return "platform profile: " + name
+    # Older Asus laptops without a platform profile.
+    for drv in ("asus-nb-wmi", "asus-wmi"):
+        for f in ("throttle_thermal_policy", "fan_boost_mode"):
+            if write(sysfs("devices/platform", drv, f), ASUS_POLICY[mode]):
+                return f"asus {f}: {ASUS_POLICY[mode]}"
+    return None
+
+
+def set_turbo(on):
+    done = write(sysfs("devices/system/cpu/intel_pstate/no_turbo"), "0" if on else "1")
+    done |= write(sysfs("devices/system/cpu/cpufreq/boost"), "1" if on else "0")
+    for pol in glob_dir(sysfs("devices/system/cpu/cpufreq"), "policy"):
+        done |= write(os.path.join(pol, "boost"), "1" if on else "0")
+    return done
+
+
+def set_epp(mode):
+    done = False
+    for pol in glob_dir(sysfs("devices/system/cpu/cpufreq"), "policy"):
+        have = (read(os.path.join(pol, "energy_performance_available_preferences")) or "").split()
+        for name in EPP[mode]:
+            if name in have and write(os.path.join(pol, "energy_performance_preference"), name):
+                done = True
+                break
+    return done
+
+
+def apply(mode):
+    """Put the PC in quiet / balanced / performance. Returns what it changed."""
+    did = []
+    p = set_platform_profile(mode)
+    if p:
+        did.append(p)
+    if set_turbo(mode != "quiet"):
+        did.append("turbo " + ("on" if mode != "quiet" else "off"))
+    if set_epp(mode):
+        did.append("cpu energy: " + mode)
+    return did
+
+
+def conf_mode():
+    try:
+        with open(CONF) as f:
+            for line in f:
+                if line.startswith("MODE="):
+                    m = line.strip().split("=", 1)[1].strip('"')
+                    if m in MODES:
+                        return m
+    except OSError:
+        pass
+    return "auto"
+
+
+def held():
+    m = read(HOLD)
+    return m if m in PPD else None
+
+
+def cpu_times():
+    """{cpuN: (busy, total)} from /proc/stat."""
+    out = {}
+    try:
+        with open(os.path.join(PROC, "stat")) as f:
+            for line in f:
+                if not line.startswith("cpu") or line.startswith("cpu "):
+                    continue
+                name, *vals = line.split()
+                vals = [int(v) for v in vals[:8]]
+                idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+                out[name] = (sum(vals) - idle, sum(vals))
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def busiest_core(before, after):
+    """0..1: how busy the busiest core was between two cpu_times() readings.
+    The busiest core, not the average: a game's main thread maxes one core
+    while the other 15 sit idle."""
+    top = 0.0
+    for cpu, (b1, t1) in after.items():
+        b0, t0 = before.get(cpu, (b1, t1))
+        if t1 > t0:
+            top = max(top, (b1 - b0) / (t1 - t0))
+    return top
+
+
+class Auto:
+    """Decides quiet/balanced from how busy the CPU is (with patience, so the
+    fans don't flip on every short spike)."""
+
+    def __init__(self):
+        self.state, self.up, self.down = "quiet", 0, 0
+
+    def feed(self, busy):
+        if busy >= BUSY:
+            self.up, self.down = self.up + 1, 0
+        elif busy <= CALM:
+            self.up, self.down = 0, self.down + 1
+        else:
+            self.up = self.down = 0
+        if self.state == "quiet" and self.up >= UP_CHECKS:
+            self.state = "balanced"
+        elif self.state == "balanced" and self.down >= DOWN_CHECKS:
+            self.state = "quiet"
+        return self.state
+
+
+def slept_gap():
+    """Grows by the time spent asleep (suspend): firmware may reset the fan mode then."""
+    try:
+        return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+    except (AttributeError, OSError):
+        return 0.0
+
+
+def daemon():
+    auto, current = Auto(), None
+    before, gap = cpu_times(), slept_gap()
+    while True:
+        mode = held() or conf_mode()
+        after = cpu_times()
+        if mode == "auto":
+            want = auto.feed(busiest_core(before, after))
+        else:
+            want = mode
+            auto = Auto()
+        before = after
+        now_gap = slept_gap()
+        woke = now_gap - gap > 5
+        gap = now_gap
+        if want != current or woke:
+            did = apply(want)
+            print(f"migood-fan: {mode} -> {want}: {', '.join(did) or 'nothing to change on this PC'}",
+                  flush=True)
+            current = want
+        time.sleep(INTERVAL)
+
+
+def status():
+    print("mode:", held() and f"{held()} (held by the installer)" or conf_mode())
+    print("platform profile:", read(sysfs("firmware/acpi/platform_profile")) or "not supported",
+          f"(choices: {read(sysfs('firmware/acpi/platform_profile_choices')) or '-'})")
+    nt = read(sysfs("devices/system/cpu/intel_pstate/no_turbo"))
+    bo = read(sysfs("devices/system/cpu/cpufreq/boost"))
+    print("turbo:", {"0": "on", "1": "off"}.get(nt) or {"1": "on", "0": "off"}.get(bo) or "unknown")
+
+
+def main(args):
+    if args == ["status"]:
+        status()
+        return 0
+    if os.geteuid() != 0:
+        print("Must run as root.", file=sys.stderr)
+        return 1
+    if len(args) == 2 and args[0] == "set" and args[1] in PPD:
+        print(", ".join(apply(args[1])) or "nothing to change on this PC")
+        return 0
+    if len(args) == 2 and args[0] == "hold" and args[1] in ("quiet", "none"):
+        if args[1] == "none":
+            try:
+                os.remove(HOLD)
+            except FileNotFoundError:
+                pass
+        else:
+            os.makedirs(os.path.dirname(HOLD), exist_ok=True)
+            with open(HOLD, "w") as f:
+                f.write("quiet\n")
+        return 0
+    if args == ["daemon"]:
+        daemon()
+        return 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
+

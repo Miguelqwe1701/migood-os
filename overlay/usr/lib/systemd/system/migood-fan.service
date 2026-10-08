@@ -1,0 +1,14 @@
+# Quiet fans (Migood OS Settings -> Fans). See /usr/lib/migood-os/migood-fan.
+[Unit]
+Description=Migood OS quiet fans
+After=power-profiles-daemon.service
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/lib/migood-os/migood-fan daemon
+Restart=on-failure
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
+

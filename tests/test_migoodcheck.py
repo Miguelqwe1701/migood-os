@@ -84,6 +84,7 @@ class MigoodCheck(unittest.TestCase):
         Server.payload, Server.drop_first = GOOD, False
         self.lib, self.store = fake_calamares()
         sys.modules["libcalamares"] = self.lib
+        os.environ["MIGOOD_USB_CHECK"] = os.path.join(self.tmp.name, "usb-check")
         spec = importlib.util.spec_from_file_location("migoodcheck", MODULE)
         self.m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.m)
@@ -140,6 +141,45 @@ class MigoodCheck(unittest.TestCase):
         self.stick(b"anything")
         self.assertIsNone(self.step("verify"))
         self.assertIsNone(self.step("repair"))
+
+    def test_skipped_check_does_not_read_the_stick(self):
+        self.stick(b"broken")  # would fail the check...
+        with open(os.environ["MIGOOD_USB_CHECK"], "w") as f:
+            f.write(f"{SHA} skipped\n")  # ...but the owner pressed "Skip check"
+        self.assertIsNone(self.step("verify"))
+        self.assertFalse(self.store["migoodNeedsRepair"])
+
+    def test_good_result_is_saved_for_a_retry(self):
+        self.stick(GOOD)
+        self.step("verify")
+        with open(os.environ["MIGOOD_USB_CHECK"]) as f:
+            self.assertEqual(f.read().split(), [SHA, "ok"])
+
+    def test_an_error_becomes_a_message_not_a_crash(self):
+        self.stick(b"broken")
+        self.step("verify")
+        def boom(*_):
+            raise RuntimeError("disk vanished")
+        self.m.download = boom
+        err = self.step("repair")
+        self.assertEqual(err[0], "Couldn't install Migood OS")
+        self.assertIn("disk vanished", err[1])
+
+    def test_repair_without_a_mount_point_is_a_message(self):
+        self.stick(b"broken")
+        self.step("verify")
+        self.store["rootMountPoint"] = None
+        self.assertEqual(self.step("repair")[0], "Couldn't install Migood OS")
+
+    def test_command_line_check(self):
+        self.lib.job.configuration = {}
+        self.m.libcalamares = None  # like migood-install runs it
+        self.m.CDROM = self.cdrom
+        self.stick(GOOD)
+        self.assertEqual(self.m.cli_check(), 0)
+        os.remove(os.environ["MIGOOD_USB_CHECK"])
+        self.stick(b"broken")
+        self.assertEqual(self.m.cli_check(), 1)
 
 
 if __name__ == "__main__":
