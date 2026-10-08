@@ -56,7 +56,7 @@ jobs:
       - name: Script syntax
         run: |
           bash -n cubic/customize.sh && bash -n build/build-iso.sh
-          bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh
+          bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh && bash -n build/check-iso.sh
           python3 -m py_compile tools/publish-os.py
 
   iso:
@@ -92,6 +92,11 @@ jobs:
           else
             mv migood-os-*.iso base.iso
           fi
+          # Never build on top of a broken ISO: then build from scratch instead.
+          if ! sudo bash ../build/check-iso.sh base.iso; then
+            echo "::warning title=Base ISO::$TAG's ISO failed the check; building from scratch"
+            rm -f base.iso; exit 0
+          fi
           echo "Starting from $TAG"
           echo "BASE_ISO=$PWD/base.iso" >> "$GITHUB_ENV"
 
@@ -104,6 +109,9 @@ jobs:
           # The build ran as root, so out/ belongs to root; the next steps run
           # as the normal runner user and must be able to write there (split).
           sudo chown -R "$(id -u):$(id -g)" out
+
+      - name: Check the new ISO (every file in it must read back)
+        run: sudo bash build/check-iso.sh "out/migood-os-$VERSION.iso"
 
       - name: Update bundle (for PCs already running the previous version)
         env:
