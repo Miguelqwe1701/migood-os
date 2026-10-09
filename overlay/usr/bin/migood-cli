@@ -36,16 +36,38 @@ def ask(req):
     return json.loads(line) if line else {"ok": False, "error": "no answer"}
 
 
+def get_token():
+    """Retrieve the Migood login token from user config or system storage."""
+    candidates = [
+        os.path.expanduser("~/.config/migood/token"),
+        os.path.join(os.environ.get("MIGOOD_STATE", "/var/lib/migood-os"), "token"),
+    ]
+    for p in candidates:
+        try:
+            with open(p) as f:
+                t = f.read().strip()
+                if t:
+                    return t
+        except OSError:
+            pass
+    return None
+
+
 def wake_check():
-    """Root only: reads the ticket from the service's own file."""
+    """Root only: reads the ticket from the service's own file, or login token."""
     sys.path.insert(0, "/usr/lib/migood-os")
     import migoodlib
     state = os.path.join(os.environ.get("MIGOOD_STATE", "/var/lib/migood-os"), "wake.json")
+    token = None
     try:
         with open(state) as f:
-            token = json.load(f)["token"]
+            token = json.load(f).get("token")
     except (OSError, ValueError, KeyError):
-        return {"ok": False, "error": "not sleeping (no wake ticket)"}
+        pass
+    if not token:
+        token = get_token()
+    if not token:
+        return {"ok": False, "error": "You must be logged in."}
     try:
         return {"ok": True, **migoodlib.api("/api/remote/wake/check", {"token": token}, timeout=15)}
     except RuntimeError as e:
@@ -58,10 +80,23 @@ def main(argv):
         every = 5
         if "--every" in argv:
             every = int(argv[argv.index("--every") + 1])
-        token = sys.stdin.readline().strip()
-        ans = ask({"cmd": "sleep", "token": token, "every": every})
-    elif cmd in ("status", "cancel", "resumed"):
+        token = ""
+        if not sys.stdin.isatty():
+            token = sys.stdin.readline().strip()
+        if not token:
+            token = get_token() or ""
+        ans = ask({"cmd": "sleep", "token": token or None, "every": every})
+    elif cmd in ("status", "cancel", "resumed", "token", "get-token"):
         ans = ask({"cmd": cmd})
+    elif cmd in ("login", "set-token"):
+        token = ""
+        if not sys.stdin.isatty():
+            token = sys.stdin.readline().strip()
+        elif len(argv) > 1:
+            token = argv[1].strip()
+        else:
+            token = get_token() or ""
+        ans = ask({"cmd": "login", "token": token})
     elif cmd == "wake-check":
         ans = wake_check()
     else:

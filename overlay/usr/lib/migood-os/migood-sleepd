@@ -223,6 +223,31 @@ def migood_user():
     return None
 
 
+def get_login_token(user=None):
+    """Retrieve the Migood login token, the same way migood-ai,
+    migood-settings, and update do. First check user's ~/.config/migood/token,
+    then /var/lib/migood-os/token."""
+    candidates = []
+    if user:
+        try:
+            home = pwd.getpwnam(user).pw_dir
+            candidates.append(os.path.join(home, ".config/migood/token"))
+        except (KeyError, OSError):
+            pass
+    candidates.append(os.path.expanduser("~/.config/migood/token"))
+    candidates.append(os.path.join(STATE_DIR, "token"))
+
+    for p in candidates:
+        try:
+            with open(p) as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except OSError:
+            pass
+    return None
+
+
 class Sleepd:
     def __init__(self, system, server=None):
         self.sys = system
@@ -230,6 +255,9 @@ class Sleepd:
         self.lock = threading.Lock()
         self.state = self.load()
         system.on_resume_hook = lambda: self.on_resume(pretend_alarm=True)
+
+    def get_token(self):
+        return get_login_token(self.sys.user if self.sys else None)
 
     # --- state file ---
     def load(self):
@@ -240,15 +268,20 @@ class Sleepd:
             return {}
 
     def save(self):
-        os.makedirs(STATE_DIR, exist_ok=True)
-        fd = os.open(STATE + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(self.state, f)
-        os.replace(STATE + ".new", STATE)
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            tmp = STATE + ".new"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.state, f)
+            os.replace(tmp, STATE)
+        except OSError as e:
+            log(f"save state: {e}")
 
     # --- server ---
     def wake_check(self, up=False, battery=None, low=None):
-        body = {"token": self.state["token"]}
+        tok = self.state.get("token") or self.get_token()
+        body = {"token": tok}
         if up:
             body["up"] = True
         # Battery (PCs that have one) and "low" (the last check-in before the
@@ -265,20 +298,68 @@ class Sleepd:
     def status(self):
         s = self.state
         on_batt, pct = self.sys.battery()
+        tok = self.get_token()
         return {"ok": True, "version": PROTOCOL, "sleeping": bool(s.get("sleeping")),
                 "every": s.get("every"), "last": s.get("last"),
                 "battery": pct, "on_battery": on_batt,
-                "low_battery": bool(s.get("low_battery")), "dry_run": self.sys.dry_run}
+                "low_battery": bool(s.get("low_battery")), "dry_run": self.sys.dry_run,
+                "logged_in": bool(tok), "user": self.sys.user}
+
+    def cmd_set_token(self, token):
+        if not token or not isinstance(token, str):
+            return {"ok": False, "error": "bad token"}
+        token = token.strip()
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            t_path = os.path.join(STATE_DIR, "token")
+            with open(t_path, "w") as f:
+                f.write(token + "\n")
+            os.chmod(t_path, 0o600)
+            if self.sys.user:
+                try:
+                    pw = pwd.getpwnam(self.sys.user)
+                    u_dir = os.path.join(pw.pw_dir, ".config/migood")
+                    os.makedirs(u_dir, exist_ok=True)
+                    u_path = os.path.join(u_dir, "token")
+                    with open(u_path, "w") as f:
+                        f.write(token + "\n")
+                    os.chmod(u_path, 0o600)
+                    os.chown(u_path, pw.pw_uid, pw.pw_gid)
+                    os.chown(u_dir, pw.pw_uid, pw.pw_gid)
+                except (KeyError, OSError):
+                    pass
+            return {"ok": True, "logged_in": True}
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
 
     def cmd_sleep(self, token, every):
-        if not isinstance(token, str) or not TOKEN_RE.match(token):
-            return {"ok": False, "error": "bad token"}
+        if not token:
+            token = self.get_token()
+        if not token:
+            return {"ok": False, "error": "You must be logged in."}
         try:
             every = min(30, max(2, int(every or 5)))
         except (TypeError, ValueError):
             return {"ok": False, "error": "bad every"}
+
+        wake_ticket = token
+        # If token is not already a 48-char wake ticket, attempt to obtain one via /api/remote/sleep
+        if not (isinstance(token, str) and len(token) == 48 and TOKEN_RE.match(token)):
+            try:
+                body = {"every": every, "kind": "os", "name": socket.gethostname()}
+                if self.server:
+                    res = migoodlib.api("/api/remote/sleep", body, token=token, only=self.server, timeout=10)
+                else:
+                    res = migoodlib.api("/api/remote/sleep", body, token=token, timeout=10)
+                if isinstance(res, dict) and res.get("token"):
+                    wake_ticket = res["token"]
+            except Exception as e:
+                log(f"register sleep note: {e}")
+
+        if not isinstance(wake_ticket, str) or not TOKEN_RE.match(wake_ticket):
+            return {"ok": False, "error": "bad token"}
         with self.lock:
-            self.state = {"token": token, "every": every, "sleeping": True,
+            self.state = {"token": wake_ticket, "every": every, "sleeping": True,
                           "since": int(self.sys.now()), "last": self.state.get("last")}
             self.save()
         # Answer first, then sleep, so the app gets its reply.
@@ -301,6 +382,11 @@ class Sleepd:
         cmd = req.get("cmd") if isinstance(req, dict) else None
         if cmd == "status":
             return self.status()
+        if cmd in ("token", "get-token", "login-status"):
+            tok = self.get_token()
+            return {"ok": True, "logged_in": bool(tok), "token": tok}
+        if cmd in ("login", "set-token"):
+            return self.cmd_set_token(req.get("token"))
         if cmd == "sleep":
             return self.cmd_sleep(req.get("token"), req.get("every"))
         if cmd == "cancel":

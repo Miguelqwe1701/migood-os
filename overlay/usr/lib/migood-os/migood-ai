@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Migood AI on the desktop: a small chat window (feature 25).
+"""Migood AI on the desktop: a small chat window with Markdown support (feature 25).
 
   migood-ai ["question"]   opens the window, asking the question right away
 
 Uses the same Migood AI as the site (/api/ai/chat), with the same rules:
 water limits, age filters for 12-and-under, all decided by the server.
 Conversations from here are private (not saved to your Migood AI history).
+Supports formatted Markdown (bold, lists, headings, links, and code blocks with copy).
 """
 import os
 import sys
@@ -18,48 +19,164 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from migoodlib import api  # noqa: E402
+from migoodmd import blocks  # noqa: E402
 
-TOKEN = os.path.expanduser("~/.config/migood/token")
+TOKEN_USER = os.path.expanduser("~/.config/migood/token")
+TOKEN_SYS = "/var/lib/migood-os/token"
+
 CSS = b"""
 @define-color accent_bg_color #2ecc71;
 @define-color accent_color #2ecc71;
 @define-color accent_fg_color #0a0d12;
-window, .background { font-family: Nunito, sans-serif; }
-.bubble { border-radius: 18px; padding: 10px 14px; }
-.me { background-color: #2ecc71; color: #0a0d12; }
-.ai { background-color: rgba(255,255,255,0.08); }
-.note { color: #9aa4ad; font-size: 13px; }
+
+window, .background {
+    font-family: Nunito, system-ui, sans-serif;
+    background-color: #0e1217;
+}
+
+.chat-scroll {
+    background: transparent;
+}
+
+.bubble {
+    border-radius: 18px;
+    padding: 12px 16px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.me {
+    background: linear-gradient(135deg, #2ecc71, #27ae60);
+    color: #0a0d12;
+    border-bottom-right-radius: 4px;
+    font-weight: 500;
+}
+
+.ai {
+    background-color: #181d24;
+    color: #f0f3f6;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom-left-radius: 4px;
+}
+
+.sender-me {
+    color: #2ecc71;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 6px;
+    margin-bottom: 2px;
+}
+
+.sender-ai {
+    color: #58a6ff;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 6px;
+    margin-bottom: 2px;
+}
+
+.code-box {
+    background-color: #0a0d12;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin: 6px 0;
+}
+
+.code-label {
+    font-family: monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #58a6ff;
+    text-transform: uppercase;
+}
+
+.code-text {
+    font-family: 'JetBrains Mono', monospace, Courier;
+    font-size: 12.5px;
+    color: #e6edf3;
+}
+
+.copy-btn {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.md-text {
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.note {
+    color: #8b949e;
+    font-size: 12px;
+}
+
+.water-badge {
+    background-color: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-end: 8px;
+}
+
+.input-container {
+    background-color: #161b22;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    padding: 4px 8px;
+}
+
+.chat-entry {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #f0f3f6;
+    font-size: 14px;
+}
 """
 
 
 def token():
-    try:
-        with open(TOKEN) as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
+    for p in (TOKEN_USER, TOKEN_SYS):
+        try:
+            with open(p) as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except OSError:
+            pass
+    return None
 
 
 class Chat(Adw.ApplicationWindow):
     def __init__(self, app, first):
-        super().__init__(application=app, title="Migood AI", default_width=520, default_height=640)
+        super().__init__(application=app, title="Migood AI", default_width=560, default_height=680)
         self.conversation = []
         view = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        self.water = Gtk.Label(css_classes=["note"])
+        self.water = Gtk.Label(css_classes=["water-badge"])
         header.pack_end(self.water)
         view.add_top_bar(header)
 
-        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                            margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        self.scroll = Gtk.ScrolledWindow(child=self.list, vexpand=True)
-        self.entry = Gtk.Entry(placeholder_text="Ask Migood AI…", hexpand=True)
+        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                            margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        self.scroll = Gtk.ScrolledWindow(child=self.list, vexpand=True, css_classes=["chat-scroll"])
+
+        self.entry = Gtk.Entry(placeholder_text="Ask Migood AI…", hexpand=True, css_classes=["chat-entry"])
         self.entry.connect("activate", lambda *_: self.send())
-        send = Gtk.Button(icon_name="go-up-symbolic", css_classes=["suggested-action", "circular"])
-        send.connect("clicked", lambda *_: self.send())
-        bottom = Gtk.Box(spacing=8, margin_top=8, margin_bottom=12, margin_start=12, margin_end=12)
-        bottom.append(self.entry)
-        bottom.append(send)
+        self.send_btn = Gtk.Button(icon_name="go-up-symbolic", css_classes=["suggested-action", "circular"])
+        self.send_btn.connect("clicked", lambda *_: self.send())
+
+        input_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, css_classes=["input-container"])
+        input_box.append(self.entry)
+        input_box.append(self.send_btn)
+
+        bottom = Gtk.Box(spacing=8, margin_top=6, margin_bottom=14, margin_start=14, margin_end=14)
+        bottom.append(input_box)
+
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(self.scroll)
         box.append(bottom)
@@ -70,28 +187,112 @@ class Chat(Adw.ApplicationWindow):
             self.bubble("ai", "Sign in with Migood Games to use Migood AI here. "
                               "(Setup signs you in, or sign in from the Migood Games app.)")
             self.entry.set_sensitive(False)
+            self.send_btn.set_sensitive(False)
         elif first:
             self.entry.set_text(first)
             GLib.idle_add(self.send)
 
-    def bubble(self, who, text):
-        lbl = Gtk.Label(label=text, wrap=True, selectable=True, xalign=0,
-                        css_classes=["bubble", "me" if who == "me" else "ai"],
-                        halign=Gtk.Align.END if who == "me" else Gtk.Align.START)
-        lbl.set_max_width_chars(48)
-        self.list.append(lbl)
+    def scroll_to_bottom(self):
         GLib.idle_add(lambda: self.scroll.get_vadjustment().set_value(
             self.scroll.get_vadjustment().get_upper()))
-        return lbl
+
+    def make_code_card(self, code_text, lang):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, css_classes=["code-box"])
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        badge = Gtk.Label(label=(lang or "code").lower(), css_classes=["code-label"],
+                          halign=Gtk.Align.START, hexpand=True)
+        copy_btn = Gtk.Button(label="Copy", css_classes=["copy-btn", "flat"])
+
+        def on_copy(*_):
+            clipboard = Gdk.Display.get_default().get_clipboard()
+            clipboard.set(code_text)
+            copy_btn.set_label("✓ Copied")
+            GLib.timeout_add(2000, lambda: (copy_btn.set_label("Copy"), False)[1])
+
+        copy_btn.connect("clicked", on_copy)
+        top.append(badge)
+        top.append(copy_btn)
+        card.append(top)
+
+        code_lbl = Gtk.Label(label=code_text, wrap=True, selectable=True, xalign=0, css_classes=["code-text"])
+        card.append(code_lbl)
+        return card
+
+    def populate_bubble(self, box, who, text):
+        if who == "me":
+            lbl = Gtk.Label(label=text, wrap=True, selectable=True, xalign=0)
+            lbl.set_max_width_chars(52)
+            box.append(lbl)
+            return
+
+        rendered = blocks(text)
+        if not rendered:
+            lbl = Gtk.Label(label=text or "No answer.", wrap=True, selectable=True, xalign=0)
+            lbl.set_max_width_chars(52)
+            box.append(lbl)
+            return
+
+        for block in rendered:
+            kind = block[0]
+            if kind == "text":
+                lbl = Gtk.Label(wrap=True, selectable=True, xalign=0, css_classes=["md-text"])
+                lbl.set_use_markup(True)
+                lbl.set_max_width_chars(52)
+                try:
+                    lbl.set_markup(block[1])
+                except Exception:
+                    lbl.set_text(block[1])
+                lbl.connect("activate-link", lambda _lbl, uri: (Gtk.show_uri(self, uri, Gdk.CURRENT_TIME), True)[1])
+                box.append(lbl)
+            elif kind == "code":
+                code_text = block[1]
+                lang = block[2] if len(block) > 2 else ""
+                box.append(self.make_code_card(code_text, lang))
+
+    def bubble(self, who, text, thinking=False):
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                      halign=Gtk.Align.END if who == "me" else Gtk.Align.START)
+        sender = Gtk.Label(label="You" if who == "me" else "✨ Migood AI",
+                           halign=Gtk.Align.END if who == "me" else Gtk.Align.START,
+                           css_classes=["sender-me" if who == "me" else "sender-ai"])
+        row.append(sender)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      css_classes=["bubble", "me" if who == "me" else "ai"])
+        row.append(box)
+
+        if thinking:
+            lbl = Gtk.Label(label="Thinking…", css_classes=["note"], xalign=0)
+            box.append(lbl)
+            self.list.append(row)
+            self.scroll_to_bottom()
+            return box
+
+        self.populate_bubble(box, who, text)
+        self.list.append(row)
+        self.scroll_to_bottom()
+        return box
+
+    def update_bubble(self, box, text):
+        child = box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+        self.populate_bubble(box, "ai", text)
+        self.scroll_to_bottom()
 
     def send(self):
         text = self.entry.get_text().strip()
         if not text:
             return False
         self.entry.set_text("")
+        self.entry.set_sensitive(False)
+        self.send_btn.set_sensitive(False)
+
         self.bubble("me", text)
         self.conversation.append({"role": "user", "content": text})
-        thinking = self.bubble("ai", "…")
+        thinking_box = self.bubble("ai", "", thinking=True)
 
         def run():
             try:
@@ -101,12 +302,18 @@ class Chat(Adw.ApplicationWindow):
                 water = (res.get("water"), res.get("waterMax"))
             except RuntimeError as e:
                 reply, water = str(e), (None, None)
+
             def show():
-                thinking.set_label(reply)
+                self.update_bubble(thinking_box, reply)
                 self.conversation.append({"role": "assistant", "content": reply})
                 if isinstance(water[0], (int, float)) and water[1]:
                     self.water.set_label(f"💧 {water[0]}/{water[1]}")
+                self.entry.set_sensitive(True)
+                self.send_btn.set_sensitive(True)
+                self.entry.grab_focus()
+
             GLib.idle_add(show)
+
         threading.Thread(target=run, daemon=True).start()
         return False
 

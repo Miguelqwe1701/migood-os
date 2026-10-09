@@ -145,6 +145,32 @@ class SleepdTest(unittest.TestCase):
     def test_status(self):
         s = self.d.handle({"cmd": "status"}, 1000)
         self.assertEqual((s["ok"], s["version"], s["sleeping"]), (True, 1, False))
+        self.assertIn("logged_in", s)
+
+    def test_token_and_set_token(self):
+        # Set a token
+        res = self.d.handle({"cmd": "set-token", "token": TICKET}, 1000)
+        self.assertTrue(res["ok"])
+        # Query token
+        tok_res = self.d.handle({"cmd": "token"}, 1000)
+        self.assertTrue(tok_res["ok"])
+        self.assertTrue(tok_res["logged_in"])
+        self.assertEqual(tok_res["token"], TICKET)
+        # Status shows logged in
+        status_res = self.d.handle({"cmd": "status"}, 1000)
+        self.assertTrue(status_res["logged_in"])
+
+    def test_sleep_uses_saved_login_token(self):
+        # Save token to system state
+        self.d.handle({"cmd": "set-token", "token": TICKET}, 1000)
+        # Sleep without passing a token
+        res = self.d.handle({"cmd": "sleep", "every": 5}, 1000)
+        self.assertTrue(res["ok"])
+        for _ in range(100):
+            if ("suspend",) in self.pc.calls:
+                break
+            time.sleep(0.01)
+        self.d.handle({"cmd": "cancel"}, 1000)
 
     # --- the check-in ---
     def test_nothing_asked_goes_back_to_sleep_frozen(self):
