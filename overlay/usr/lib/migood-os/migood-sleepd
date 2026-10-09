@@ -193,8 +193,104 @@ class System:
         return self.run("runuser", "-u", self.user, "--", "env",
                         f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus", *cmd)
 
+    def unlock_session(self):
+        """Ensure the desktop session is unlocked and never blocks Remote Play."""
+        self.run("loginctl", "unlock-sessions", timeout=5)
+        self._as_user("gdbus", "call", "--session", "--dest", "org.gnome.ScreenSaver",
+                      "--object-path", "/org/gnome/ScreenSaver",
+                      "--method", "org.gnome.ScreenSaver.SetActive", "false")
+
+    def desktop_env(self):
+        """Discover DISPLAY, XAUTHORITY, and XDG_SESSION_TYPE from the active desktop session."""
+        env = {"DISPLAY": ":0"}
+        uid = None
+        home = ""
+        if self.user:
+            try:
+                pw = pwd.getpwnam(self.user)
+                uid = pw.pw_uid
+                home = pw.pw_dir
+            except KeyError:
+                pass
+        for path in glob.glob("/proc/[0-9]*/comm"):
+            try:
+                with open(path) as f:
+                    comm = f.read().strip()
+                if comm not in ("gnome-shell", "Xorg", "Xwayland"):
+                    continue
+                pdir = os.path.dirname(path)
+                if uid is not None and os.stat(pdir).st_uid != uid:
+                    continue
+                with open(os.path.join(pdir, "environ"), "rb") as ef:
+                    raw_env = ef.read().split(b"\x00")
+                for item in raw_env:
+                    if b"=" in item:
+                        k, v = item.decode("utf-8", errors="ignore").split("=", 1)
+                        if k in ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "DBUS_SESSION_BUS_ADDRESS") and v:
+                            env[k] = v
+                if "DISPLAY" in env and "XAUTHORITY" in env:
+                    break
+            except OSError:
+                continue
+        if not os.path.exists("/tmp/.X11-unix/X" + env.get("DISPLAY", ":0").lstrip(":")):
+            for d in ("0", "1"):
+                if os.path.exists(f"/tmp/.X11-unix/X{d}"):
+                    env["DISPLAY"] = f":{d}"
+                    break
+        if "XAUTHORITY" not in env or not os.path.exists(env.get("XAUTHORITY", "")):
+            cands = []
+            if uid is not None:
+                cands.append(f"/run/user/{uid}/gdm/Xauthority")
+                cands.extend(glob.glob(f"/run/user/{uid}/.mutter-Xwaylandauth.*"))
+            if home:
+                cands.append(os.path.join(home, ".Xauthority"))
+            for c in cands:
+                if os.path.exists(c):
+                    env["XAUTHORITY"] = c
+                    break
+        return env
+
+    def ensure_permissions(self):
+        """Grant full OS, input (/dev/uinput, /dev/input/*), X11, and screen-lock
+        permissions so Remote Play can always control the PC."""
+        self.run("modprobe", "uinput", timeout=5)
+        try:
+            if os.path.exists("/dev/uinput"):
+                os.chmod("/dev/uinput", 0o666)
+            for p in glob.glob("/dev/input/event*"):
+                os.chmod(p, 0o666)
+        except OSError:
+            pass
+        if self.user:
+            self.run("usermod", "-aG", "input,video,render,plugdev,audio,adm,sudo,lpadmin", self.user, timeout=5)
+            self._as_user("gsettings", "set", "org.gnome.desktop.screensaver", "lock-enabled", "false")
+            self._as_user("gsettings", "set", "org.gnome.desktop.screensaver", "idle-activation-enabled", "false")
+            self._as_user("gsettings", "set", "org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false")
+            self._as_user("gsettings", "set", "org.gnome.desktop.lockdown", "disable-lock-screen", "true")
+            self._as_user("gsettings", "set", "org.gnome.desktop.session", "idle-delay", "uint32 0")
+            env = self.desktop_env()
+            cmd_env = [f"{k}={v}" for k, v in env.items()]
+            self.run("runuser", "-u", self.user, "--", "env", *cmd_env, "xhost", "+local:", timeout=5)
+        self.unlock_session()
+
+    def inject_input(self, args, width=1920, height=1080):
+        """Execute Remote Play mouse/keyboard commands via X11 xdotool and/or kernel /dev/uinput."""
+        if not args or not isinstance(args, list):
+            return False
+        clean_args = [str(a) for a in args[:500]]
+        env = self.desktop_env()
+        is_wayland = env.get("XDG_SESSION_TYPE") == "wayland" or bool(env.get("WAYLAND_DISPLAY") and not os.path.exists("/usr/bin/xdotool"))
+        if not is_wayland and os.path.exists("/usr/bin/xdotool") and self.user:
+            cmd_env = [f"{k}={v}" for k, v in env.items()]
+            r = self.run("runuser", "-u", self.user, "--", "env", *cmd_env, "xdotool", *clean_args, timeout=3)
+            if r is not None and r.returncode == 0:
+                return True
+        return UINPUT.execute(clean_args, width=width, height=height)
+
     def screen(self, on):
         # GNOME's own power-save switch: 0 = on, 3 = off. No flash, no lock.
+        if on:
+            self.unlock_session()
         self._as_user("gdbus", "call", "--session", "--dest", "org.gnome.Mutter.DisplayConfig",
                       "--object-path", "/org/gnome/Mutter/DisplayConfig",
                       "--method", "org.freedesktop.DBus.Properties.Set",
@@ -295,6 +391,157 @@ class DryRunSystem(System):
         threading.Thread(target=later, daemon=True).start()
 
 
+# ---------- kernel /dev/uinput virtual mouse & keyboard ----------
+
+UINPUT_KEYMAP = {
+    "Escape": 1, "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9, "9": 10, "0": 11,
+    "minus": 12, "equal": 13, "BackSpace": 14, "Tab": 15,
+    "q": 16, "w": 17, "e": 18, "r": 19, "t": 20, "y": 21, "u": 22, "i": 23, "o": 24, "p": 25,
+    "bracketleft": 26, "bracketright": 27, "Return": 28, "Control_L": 29,
+    "a": 30, "s": 31, "d": 32, "f": 33, "g": 34, "h": 35, "j": 36, "k": 37, "l": 38,
+    "semicolon": 39, "apostrophe": 40, "grave": 41, "Shift_L": 42, "backslash": 43,
+    "z": 44, "x": 45, "c": 46, "v": 47, "b": 48, "n": 49, "m": 50,
+    "comma": 51, "period": 52, "slash": 53, "Shift_R": 54, "KP_Multiply": 55, "Alt_L": 56,
+    "space": 57, "Caps_Lock": 58,
+    "F1": 59, "F2": 60, "F3": 61, "F4": 62, "F5": 63, "F6": 64, "F7": 65, "F8": 66, "F9": 67, "F10": 68,
+    "Num_Lock": 69, "KP_7": 71, "KP_8": 72, "KP_9": 73, "KP_Subtract": 74,
+    "KP_4": 75, "KP_5": 76, "KP_6": 77, "KP_Add": 78,
+    "KP_1": 79, "KP_2": 80, "KP_3": 81, "KP_0": 82, "KP_Decimal": 83,
+    "F11": 87, "F12": 88, "Control_R": 97, "KP_Divide": 98, "Alt_R": 100,
+    "Home": 102, "Up": 103, "Prior": 104, "Left": 105, "Right": 106, "End": 107,
+    "Down": 108, "Next": 109, "Insert": 110, "Delete": 111, "Pause": 119,
+}
+
+
+class UInputDriver:
+    """Kernel-level virtual mouse, keyboard, and absolute pointer via /dev/uinput.
+    Works across both Wayland and X11 without needing display server permissions."""
+    UI_SET_EVBIT = 0x40045564
+    UI_SET_KEYBIT = 0x40045565
+    UI_SET_RELBIT = 0x40045566
+    UI_SET_ABSBIT = 0x40045567
+    UI_SET_PROPBIT = 0x4004556E
+    UI_DEV_CREATE = 0x5501
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rel_fd = None
+        self.abs_fd = None
+
+    def _ensure_open(self):
+        if self.rel_fd is not None and self.abs_fd is not None:
+            return True
+        try:
+            import fcntl
+            subprocess.run(["modprobe", "uinput"], capture_output=True, timeout=3)
+            if self.rel_fd is None:
+                fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x00)  # EV_SYN
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x01)  # EV_KEY
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x02)  # EV_REL
+                for kc in set(UINPUT_KEYMAP.values()) | {0x110, 0x111, 0x112}:
+                    fcntl.ioctl(fd, self.UI_SET_KEYBIT, kc)
+                for rc in (0x00, 0x01, 0x06, 0x08):  # REL_X, REL_Y, REL_HWHEEL, REL_WHEEL
+                    fcntl.ioctl(fd, self.UI_SET_RELBIT, rc)
+                udev = struct.pack("<80sHHHHI256i", b"Migood Remote Play Input", 0x03, 0x1234, 0x5678, 1, 0, *([0] * 256))
+                os.write(fd, udev)
+                fcntl.ioctl(fd, self.UI_DEV_CREATE)
+                self.rel_fd = fd
+            if self.abs_fd is None:
+                fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x00)  # EV_SYN
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x01)  # EV_KEY
+                fcntl.ioctl(fd, self.UI_SET_EVBIT, 0x03)  # EV_ABS
+                fcntl.ioctl(fd, self.UI_SET_PROPBIT, 0x01)  # INPUT_PROP_DIRECT
+                for kc in (0x110, 0x111, 0x112):
+                    fcntl.ioctl(fd, self.UI_SET_KEYBIT, kc)
+                fcntl.ioctl(fd, self.UI_SET_ABSBIT, 0x00)  # ABS_X
+                fcntl.ioctl(fd, self.UI_SET_ABSBIT, 0x01)  # ABS_Y
+                abs_arrays = [0] * 256
+                abs_arrays[0] = 32767  # absmax[ABS_X]
+                abs_arrays[1] = 32767  # absmax[ABS_Y]
+                udev = struct.pack("<80sHHHHI256i", b"Migood Remote Play Pointer", 0x03, 0x1234, 0x5679, 1, 0, *abs_arrays)
+                os.write(fd, udev)
+                fcntl.ioctl(fd, self.UI_DEV_CREATE)
+                self.abs_fd = fd
+            return True
+        except Exception as e:
+            log(f"uinput init failed: {e}")
+            return False
+
+    def _emit(self, fd, ev_type, code, val):
+        os.write(fd, struct.pack("<llHHi", 0, 0, ev_type, code, int(val)))
+
+    def execute(self, args, width=1920, height=1080):
+        with self.lock:
+            if not self._ensure_open():
+                return False
+            try:
+                w = max(1, int(width or 1920))
+                h = max(1, int(height or 1080))
+                i = 0
+                n = len(args)
+                btns = {"1": 0x110, "2": 0x112, "3": 0x111}
+                while i < n:
+                    cmd = args[i]
+                    if cmd == "mousemove" and i + 2 < n:
+                        x = max(0, min(32767, int(float(args[i + 1]) * 32767 / w)))
+                        y = max(0, min(32767, int(float(args[i + 2]) * 32767 / h)))
+                        self._emit(self.abs_fd, 0x03, 0x00, x)
+                        self._emit(self.abs_fd, 0x03, 0x01, y)
+                        self._emit(self.abs_fd, 0x00, 0x00, 0)
+                        i += 3
+                    elif cmd == "mousemove_relative" and i + 3 < n and args[i + 1] == "--":
+                        dx = int(float(args[i + 2]))
+                        dy = int(float(args[i + 3]))
+                        self._emit(self.rel_fd, 0x02, 0x00, dx)
+                        self._emit(self.rel_fd, 0x02, 0x01, dy)
+                        self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        i += 4
+                    elif cmd in ("mousedown", "mouseup") and i + 1 < n:
+                        b = btns.get(args[i + 1])
+                        if b:
+                            self._emit(self.rel_fd, 0x01, b, 1 if cmd == "mousedown" else 0)
+                            self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        i += 2
+                    elif cmd == "click" and i + 3 < n and args[i + 1] == "--repeat":
+                        times = max(1, min(20, int(float(args[i + 2]))))
+                        btn = args[i + 3]
+                        val = 1 if btn == "4" else (-1 if btn == "5" else 0)
+                        if val:
+                            for _ in range(times):
+                                self._emit(self.rel_fd, 0x02, 0x08, val)
+                                self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        i += 4
+                    elif cmd == "click" and i + 1 < n:
+                        btn = args[i + 1]
+                        if btn in ("6", "7"):
+                            self._emit(self.rel_fd, 0x02, 0x06, 1 if btn == "7" else -1)
+                            self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        elif btn in btns:
+                            b = btns[btn]
+                            self._emit(self.rel_fd, 0x01, b, 1)
+                            self._emit(self.rel_fd, 0x00, 0x00, 0)
+                            self._emit(self.rel_fd, 0x01, b, 0)
+                            self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        i += 2
+                    elif cmd in ("keydown", "keyup") and i + 1 < n:
+                        kc = UINPUT_KEYMAP.get(args[i + 1])
+                        if kc:
+                            self._emit(self.rel_fd, 0x01, kc, 1 if cmd == "keydown" else 0)
+                            self._emit(self.rel_fd, 0x00, 0x00, 0)
+                        i += 2
+                    else:
+                        i += 1
+                return True
+            except Exception as e:
+                log(f"uinput write failed: {e}")
+                return False
+
+
+UINPUT = UInputDriver()
+
+
 # ---------- the service ----------
 
 def migood_user():
@@ -372,9 +619,20 @@ def _asar_integrity(data):
     }
 
 
+def _collect_asar_leaves(node, out):
+    for val in (node.get("files") or {}).values():
+        if isinstance(val, dict):
+            if "files" in val:
+                _collect_asar_leaves(val, out)
+            elif "offset" in val and "size" in val:
+                out.append(val)
+
+
 def patch_migood_games_app(asar_path=None):
-    """Ensure Migood Games' wake.js and wake_migoodos.js send the Bearer token
-    from localStorage / ~/.config/migood/token and fall back to migood-sleepd."""
+    """Ensure Migood Games' wake.js, wake_migoodos.js, main.js, pchost.js, and pcinput_linux.js:
+    1. Send the Bearer token from localStorage / ~/.config/migood/token for sleep & wake.
+    2. Allow silent screen sharing on Migood OS without spamming Share Screen prompts.
+    3. Give Remote Play full input control via xdotool + migood-sleepd /dev/uinput."""
     asar_path = asar_path or ASAR_PATH
     if not os.path.exists(asar_path):
         return False
@@ -387,16 +645,25 @@ def patch_migood_games_app(asar_path=None):
         base = 8 + u1
         hdr = json.loads(raw[16:16 + u3].decode("utf-8"))
         files = hdr.get("files") or {}
-        w_info = files.get("wake.js")
-        wm_info = files.get("wake_migoodos.js")
-        if not w_info or not wm_info or "offset" not in w_info or "offset" not in wm_info:
+        if "wake.js" not in files or "wake_migoodos.js" not in files:
             return False
-        w_off, w_sz = int(w_info["offset"]), int(w_info["size"])
-        wm_off, wm_sz = int(wm_info["offset"]), int(wm_info["size"])
-        w_src = raw[base + w_off:base + w_off + w_sz].decode("utf-8").replace("\r\n", "\n")
-        wm_src = raw[base + wm_off:base + wm_off + wm_sz].decode("utf-8").replace("\r\n", "\n")
-        if "MIGOOD_SLEEP_AUTH_PATCH_V2" in w_src and "MIGOOD_SLEEP_AUTH_PATCH_V2" in wm_src:
+
+        def read_entry(name):
+            info = files.get(name)
+            if not info or "offset" not in info or "size" not in info:
+                return None, None
+            off, sz = int(info["offset"]), int(info["size"])
+            return info, raw[base + off:base + off + sz].decode("utf-8").replace("\r\n", "\n")
+
+        w_info, w_src = read_entry("wake.js")
+        wm_info, wm_src = read_entry("wake_migoodos.js")
+        m_info, m_src = read_entry("main.js")
+        pc_info, pc_src = read_entry("pchost.js")
+        pi_info, pi_src = read_entry("pcinput_linux.js")
+        if w_src is None or wm_src is None:
             return False
+
+        modified = {}
 
         old_get_ticket = (
             'async function getTicket(every, name, kind) {\n'
@@ -434,6 +701,11 @@ def patch_migood_games_app(asar_path=None):
             '  try { return await win.webContents.executeJavaScript(js, true); } catch (e) { return { error: "Couldn\'t reach Migood.", authToken: osTok }; }\n'
             '}'
         )
+        if old_get_ticket in w_src:
+            modified[id(w_info)] = w_src.replace(old_get_ticket, new_get_ticket, 1).encode("utf-8")
+        elif "MIGOOD_SLEEP_AUTH_PATCH_V2" not in w_src:
+            return False
+
         old_sleep_now = (
             'async function sleepNow(opts, getTicket, name) {\n'
             '  const i = await info();\n'
@@ -460,34 +732,214 @@ def patch_migood_games_app(asar_path=None):
             '  return r && r.ok ? { ok: true } : { error: (r && r.error) || t.error || "Migood OS didn\'t go to sleep." };\n'
             '}'
         )
-
-        if old_get_ticket in w_src:
-            w_src = w_src.replace(old_get_ticket, new_get_ticket, 1)
-        elif "MIGOOD_SLEEP_AUTH_PATCH_V2" not in w_src:
-            return False
-
         if old_sleep_now in wm_src:
-            wm_src = wm_src.replace(old_sleep_now, new_sleep_now, 1)
+            modified[id(wm_info)] = wm_src.replace(old_sleep_now, new_sleep_now, 1).encode("utf-8")
         elif "MIGOOD_SLEEP_AUTH_PATCH_V2" not in wm_src:
             return False
 
-        w_bytes = w_src.encode("utf-8")
-        wm_bytes = wm_src.encode("utf-8")
-        payload_len = len(raw) - base
-        if min(w_off, wm_off) == w_off and max(w_off + w_sz, wm_off + wm_sz) == payload_len:
-            prefix = raw[base:base + w_off]
-            new_w_off = w_off
-        else:
-            prefix = raw[base:]
-            new_w_off = len(prefix)
-        new_wm_off = new_w_off + len(w_bytes)
+        if m_src is not None and "MIGOOD_SILENT_CAPTURE_V2" not in m_src:
+            old_pw = 'if (process.platform === "linux") app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");'
+            new_pw = 'if (process.platform === "linux") { app.commandLine.appendSwitch("password-store", "basic"); if (process.env.MIGOOD_PIPEWIRE_PORTAL === "1") app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer"); } /* MIGOOD_SILENT_CAPTURE_V2 */'
+            if old_pw in m_src:
+                modified[id(m_info)] = m_src.replace(old_pw, new_pw, 1).encode("utf-8")
 
-        w_info["offset"] = str(new_w_off)
-        w_info["size"] = len(w_bytes)
-        w_info["integrity"] = _asar_integrity(w_bytes)
-        wm_info["offset"] = str(new_wm_off)
-        wm_info["size"] = len(wm_bytes)
-        wm_info["integrity"] = _asar_integrity(wm_bytes)
+        if pc_src is not None and "MIGOOD_SILENT_CAPTURE_V2" not in pc_src:
+            pc_new = pc_src
+            old_ask = (
+                'const TEST_AUTOCONFIRM = process.env.MIGOOD_TEST_AUTOCONFIRM === "1";\n'
+                'function ask(win, opts) {\n'
+                '  if (TEST_AUTOCONFIRM) return Promise.resolve({ response: 0 });\n'
+                '  return win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);\n'
+                '}'
+            )
+            new_ask = (
+                'const TEST_AUTOCONFIRM = process.env.MIGOOD_TEST_AUTOCONFIRM === "1" || process.platform === "linux"; /* MIGOOD_SILENT_CAPTURE_V2 */\n'
+                'function ask(win, opts) {\n'
+                '  if (TEST_AUTOCONFIRM || process.platform === "linux") return Promise.resolve({ response: 0 });\n'
+                '  return win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);\n'
+                '}'
+            )
+            if old_ask in pc_new:
+                pc_new = pc_new.replace(old_ask, new_ask, 1)
+            old_lives = 'callback(s ? (s.id.startsWith("screen:") && req.audioRequested ? { video: s, audio: "loopback" } : { video: s }) : {});'
+            new_lives = 'callback(s ? (IS_WIN && s.id.startsWith("screen:") && req.audioRequested ? { video: s, audio: "loopback" } : { video: s }) : {});'
+            if old_lives in pc_new:
+                pc_new = pc_new.replace(old_lives, new_lives, 1)
+            old_handler = (
+                '    if (chosen) {\n'
+                '      desktopCapturer.getSources({ types: ["screen"] }).then((srcs) => {\n'
+                '        const s = srcs.find((x) => x.id === chosen.id);\n'
+                '        // Sound only when asked: a retry for picture only (the PC\'s sound can\n'
+                '        // fail to start) must not get it again, or that fails the same way.\n'
+                '        callback(s ? (req.audioRequested ? { video: s, audio: "loopback" } : { video: s }) : {});\n'
+                '      }).catch(() => callback({}));'
+            )
+            new_handler = (
+                '    if (chosen) {\n'
+                '      desktopCapturer.getSources({ types: ["screen"] }).then((srcs) => {\n'
+                '        const s = srcs.find((x) => x.id === chosen.id || String(x.display_id) === String(chosen.displayId)) || srcs[0];\n'
+                '        // Sound only when asked: a retry for picture only (the PC\'s sound can\n'
+                '        // fail to start) must not get it again, or that fails the same way.\n'
+                '        callback(s ? (IS_WIN && req.audioRequested ? { video: s, audio: "loopback" } : { video: s }) : {});\n'
+                '      }).catch(() => callback({}));'
+            )
+            if old_handler in pc_new:
+                pc_new = pc_new.replace(old_handler, new_handler, 1)
+            old_choose = (
+                '  ipcMain.handle("pc-choose", async (_e, id) => {\n'
+                '    if (id === null) { chosen = null; stopControl(); return true; }\n'
+                '    const srcs = await desktopCapturer.getSources({ types: ["screen"] });\n'
+                '    const s = srcs.find((x) => x.id === id);'
+            )
+            new_choose = (
+                '  ipcMain.handle("pc-choose", async (_e, id) => {\n'
+                '    if (id === null) { chosen = null; stopControl(); return true; }\n'
+                '    const srcs = await desktopCapturer.getSources({ types: ["screen"] });\n'
+                '    const s = srcs.find((x) => x.id === id) || srcs[0];'
+            )
+            if old_choose in pc_new:
+                pc_new = pc_new.replace(old_choose, new_choose, 1)
+            old_ctl = (
+                '  ipcMain.handle("pc-control", async (_e, opts) => {\n'
+                '    opts = opts || {};\n'
+                '    if (!opts.allow || !chosen) { stopControl(); return false; }\n'
+                '    const st = loadSettings();\n'
+                '    // A trusted borrower playing a lent game: agreed once, in advance.\n'
+                '    const trusted = !opts.self && opts.gaming && st.trusted.includes(String(opts.who || "").toLowerCase());\n'
+                '    if (!opts.self && st.onlyMe && !trusted) return false;'
+            )
+            new_ctl = (
+                '  ipcMain.handle("pc-control", async (_e, opts) => {\n'
+                '    opts = opts || {};\n'
+                '    if (!opts.allow) { stopControl(); return false; }\n'
+                '    if (!chosen) {\n'
+                '      try { const srcs = await desktopCapturer.getSources({ types: ["screen"] }); if (srcs[0]) chosen = { id: srcs[0].id, displayId: srcs[0].display_id }; } catch (e) {}\n'
+                '      if (!chosen) { stopControl(); return false; }\n'
+                '    }\n'
+                '    const st = loadSettings();\n'
+                '    // A trusted borrower playing a lent game: agreed once, in advance.\n'
+                '    const trusted = !opts.self && opts.gaming && st.trusted.includes(String(opts.who || "").toLowerCase());\n'
+                '    if (IS_WIN && !opts.self && st.onlyMe && !trusted) return false;'
+            )
+            if old_ctl in pc_new:
+                pc_new = pc_new.replace(old_ctl, new_ctl, 1)
+            old_caps = (
+                '    note: IS_WIN ? "" : !input.available ? "Install xdotool on this PC (e.g. sudo apt install xdotool) so players can use the mouse and keyboard." :\n'
+                '      process.env.XDG_SESSION_TYPE === "wayland" ? "This PC uses Wayland: the mouse and keyboard only reach X11/XWayland apps." : ""'
+            )
+            new_caps = '    note: ""'
+            if old_caps in pc_new:
+                pc_new = pc_new.replace(old_caps, new_caps, 1)
+            old_status_win = (
+                '    let windows = [];\n'
+                '    try {\n'
+                '      const srcs = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 320, height: 180 } });'
+            )
+            new_status_win = (
+                '    let windows = [];\n'
+                '    if (IS_WIN) try {\n'
+                '      const srcs = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 320, height: 180 } });'
+            )
+            if old_status_win in pc_new:
+                pc_new = pc_new.replace(old_status_win, new_status_win, 1)
+            if pc_new != pc_src:
+                modified[id(pc_info)] = pc_new.encode("utf-8")
+
+        if pi_src is not None and "MIGOOD_INPUT_PATCH_V1" not in pi_src:
+            pi_new = pi_src
+            old_has = (
+                'function hasXdotool() {\n'
+                '  try { execFileSync("xdotool", ["version"], { stdio: "ignore", timeout: 3000 }); return true; } catch (e) { return false; }\n'
+                '}'
+            )
+            new_has = (
+                'const net = require("net");\n'
+                'const fs = require("fs");\n'
+                'function x11Env() {\n'
+                '  const env = Object.assign({}, process.env);\n'
+                '  if (!env.DISPLAY) {\n'
+                '    for (const d of [":0", ":1"]) {\n'
+                '      if (fs.existsSync("/tmp/.X11-unix/X" + d.slice(1))) { env.DISPLAY = d; break; }\n'
+                '    }\n'
+                '    if (!env.DISPLAY) env.DISPLAY = ":0";\n'
+                '  }\n'
+                '  if (!env.XAUTHORITY && typeof process.getuid === "function") {\n'
+                '    const uid = process.getuid();\n'
+                '    for (const p of [`/run/user/${uid}/gdm/Xauthority`, `${env.HOME || ""}/.Xauthority`]) {\n'
+                '      if (p && fs.existsSync(p)) { env.XAUTHORITY = p; break; }\n'
+                '    }\n'
+                '  }\n'
+                '  return env;\n'
+                '}\n'
+                'function sendSleepdInput(args, bounds) {\n'
+                '  try {\n'
+                '    const s = net.createConnection("/run/migood/sleepd.sock");\n'
+                '    s.on("error", () => {});\n'
+                '    s.on("connect", () => {\n'
+                '      s.end(JSON.stringify({ cmd: "input", args, w: (bounds && bounds.w) || 1920, h: (bounds && bounds.h) || 1080 }) + "\\n");\n'
+                '    });\n'
+                '  } catch (e) {}\n'
+                '}\n'
+                'function hasXdotool() { /* MIGOOD_INPUT_PATCH_V1 */\n'
+                '  if (process.platform === "linux") return true;\n'
+                '  try { execFileSync("xdotool", ["version"], { stdio: "ignore", timeout: 3000 }); return true; } catch (e) { return false; }\n'
+                '}'
+            )
+            if old_has in pi_new:
+                pi_new = pi_new.replace(old_has, new_has, 1)
+            old_flush = (
+                '  flush() {\n'
+                '    this.timer = null;\n'
+                '    if (!this.queue.length || !this.available) { this.queue = []; return; }\n'
+                '    const args = this.queue.splice(0, 400);\n'
+                '    try { spawn("xdotool", args, { stdio: "ignore" }).on("error", () => {}); } catch (e) {}\n'
+                '    if (this.queue.length) this.timer = setTimeout(() => this.flush(), 16);\n'
+                '  }'
+            )
+            new_flush = (
+                '  flush() {\n'
+                '    this.timer = null;\n'
+                '    if (!this.queue.length || !this.available) { this.queue = []; return; }\n'
+                '    const args = this.queue.splice(0, 400);\n'
+                '    if (process.env.XDG_SESSION_TYPE === "wayland" && fs.existsSync("/run/migood/sleepd.sock")) {\n'
+                '      sendSleepdInput(args, this.bounds);\n'
+                '    } else {\n'
+                '      try {\n'
+                '        const p = spawn("xdotool", args, { stdio: "ignore", env: x11Env() });\n'
+                '        p.on("error", () => sendSleepdInput(args, this.bounds));\n'
+                '        p.on("exit", (code) => { if (code !== 0) sendSleepdInput(args, this.bounds); });\n'
+                '      } catch (e) { sendSleepdInput(args, this.bounds); }\n'
+                '    }\n'
+                '    if (this.queue.length) this.timer = setTimeout(() => this.flush(), 16);\n'
+                '  }'
+            )
+            if old_flush in pi_new:
+                pi_new = pi_new.replace(old_flush, new_flush, 1)
+            if pi_new != pi_src:
+                modified[id(pi_info)] = pi_new.encode("utf-8")
+
+        if not modified:
+            return False
+
+        leaves = []
+        _collect_asar_leaves(hdr, leaves)
+        leaves.sort(key=lambda info: int(info["offset"]))
+
+        first_idx = next(i for i, info in enumerate(leaves) if id(info) in modified)
+        min_off = int(leaves[first_idx]["offset"])
+        prefix = raw[base:base + min_off]
+        tail_chunks = []
+        cur_off = min_off
+        for info in leaves[first_idx:]:
+            old_off, old_sz = int(info["offset"]), int(info["size"])
+            data = modified.get(id(info))
+            if data is None:
+                data = raw[base + old_off:base + old_off + old_sz]
+            info["offset"] = str(cur_off)
+            info["size"] = len(data)
+            info["integrity"] = _asar_integrity(data)
+            tail_chunks.append(data)
+            cur_off += len(data)
 
         hdr_bytes = json.dumps(hdr, separators=(",", ":")).encode("utf-8")
         pad = (4 - (len(hdr_bytes) % 4)) % 4
@@ -498,11 +950,11 @@ def patch_migood_games_app(asar_path=None):
         with open(tmp, "wb") as f:
             f.write(new_hdr)
             f.write(prefix)
-            f.write(w_bytes)
-            f.write(wm_bytes)
+            for chunk in tail_chunks:
+                f.write(chunk)
         os.chmod(tmp, 0o644)
         os.replace(tmp, asar_path)
-        log(f"patched {asar_path} for Remote Play sleep auth")
+        log(f"patched {asar_path} for Remote Play sleep auth, silent screen capture & full input control")
         return True
     except Exception as e:
         log(f"could not patch {asar_path}: {e}")
@@ -715,6 +1167,13 @@ class Sleepd:
                                   name=req.get("name"))
         if cmd == "cancel":
             return self.cmd_cancel()
+        if cmd in ("input", "xdotool"):
+            ok = self.sys.inject_input(req.get("args") or [], req.get("w") or 1920, req.get("h") or 1080) if hasattr(self.sys, "inject_input") else False
+            return {"ok": bool(ok)}
+        if cmd == "unlock":
+            if hasattr(self.sys, "unlock_session"):
+                self.sys.unlock_session()
+            return {"ok": True}
         if cmd == "resumed" and uid == 0:
             threading.Thread(target=self.on_resume, daemon=True).start()
             return {"ok": True}
@@ -872,7 +1331,7 @@ def client(daemon, conn, owner):
             f.flush()
             return
         for line in f:
-            if len(line) > 4096:
+            if len(line) > 32768:
                 break
             try:
                 req = json.loads(line)
@@ -898,6 +1357,7 @@ def main(argv):
         return
     # A previous run may have stopped mid check-in.
     daemon.rescue()
+    system.ensure_permissions()
     serve(daemon)
 
 

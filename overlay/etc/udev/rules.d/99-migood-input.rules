@@ -1,0 +1,5 @@
+# Migood OS: allow Migood Games Remote Play and input tools full access to
+# virtual and physical input devices without root prompts.
+KERNEL=="uinput", MODE="0666", GROUP="input", OPTIONS+="static_node=uinput"
+SUBSYSTEM=="input", MODE="0666", GROUP="input"
+

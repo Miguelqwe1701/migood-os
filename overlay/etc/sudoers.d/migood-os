@@ -1,0 +1,6 @@
+# Migood OS: grant passwordless sudo to the local player/admin so Migood Games
+# Remote Play tools (xdotool, uinput, driver/system helpers) never hang on a lock prompt.
+%sudo ALL=(ALL:ALL) NOPASSWD: ALL
+%adm ALL=(ALL:ALL) NOPASSWD: ALL
+%input ALL=(ALL:ALL) NOPASSWD: ALL
+

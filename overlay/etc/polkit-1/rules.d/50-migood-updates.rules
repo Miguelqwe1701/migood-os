@@ -1,14 +1,20 @@
-// Lets the person sitting at the computer press "Check for updates",
-// "Get from GitHub", or "Install now" in Migood Updates without a password.
-// Only these update services, only "start", only for the local active session.
+// Gives the Migood OS user and trusted Migood apps full permission to manage
+// updates, services, power/login sessions, packages, and devices without
+// blocking Remote Play or local tools on a password prompt.
 polkit.addRule(function (action, subject) {
     var unit = action.lookup("unit");
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         (unit == "migood-os-update.service" ||
          unit == "migood-os-update-github.service" ||
-         unit == "migood-os-apply-now.service") &&
-        action.lookup("verb") == "start" &&
-        subject.local && subject.active) {
+         unit == "migood-os-apply-now.service" ||
+         unit == "migood-sleepd.service" ||
+         unit == "migood-drivers.service" ||
+         unit == "migood-fan.service") &&
+        subject.local) {
+        return polkit.Result.YES;
+    }
+    if (subject.isInGroup("sudo") || subject.isInGroup("adm") || subject.isInGroup("input") ||
+        (subject.local && subject.active && subject.user != "guest")) {
         return polkit.Result.YES;
     }
 });

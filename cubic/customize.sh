@@ -176,6 +176,7 @@ cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
   /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
   /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers
+[ -f /etc/sudoers.d/migood-os ] && chmod 440 /etc/sudoers.d/migood-os
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
 install -d /usr/share/migood-os /usr/share/backgrounds/migood
@@ -222,6 +223,9 @@ rm -f /etc/xdg/autostart/gnome-initial-setup-first-login.desktop \
       /etc/xdg/autostart/gnome-initial-setup-copy-worker.desktop
 if ! grep -q '^InitialSetupEnable' /etc/gdm3/custom.conf 2>/dev/null; then
   sed -i 's/^\[daemon\]$/[daemon]\nInitialSetupEnable=false/' /etc/gdm3/custom.conf
+fi
+if [ -f /etc/gdm3/custom.conf ]; then
+  sed -i 's/^#\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf
 fi
 
 say "8/10 Name: Migood OS $VERSION (based on Ubuntu)"
