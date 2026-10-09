@@ -343,6 +343,30 @@ class SleepdTest(unittest.TestCase):
         self.assertIn(b"MIGOOD_SLEEP_AUTH_PATCH_V2", raw)
         self.assertIn(b'hdrs["Authorization"] = "Bearer " + tok', raw)
 
+    def test_deferred_ticket_registration_when_offline_at_sleep_start(self):
+        # Simulate temporary offline server when cmd_sleep is called, then online at wake_check
+        d_offline = sleepd.Sleepd(self.pc, server="http://127.0.0.1:1")
+        res = d_offline.handle({
+            "cmd": "sleep",
+            "auth_token": "jwt.token.value1234567890",
+            "id": "dev-offline1",
+            "name": "Offline-PC",
+            "every": 5,
+        }, 1000)
+        self.assertTrue(res["ok"])
+        self.assertEqual(d_offline.state.get("pending_login_token"), "jwt.token.value1234567890")
+        for _ in range(100):
+            if ("suspend",) in self.pc.calls:
+                break
+            time.sleep(0.01)
+        # Now point to working server and run check-in
+        d_offline.server = self.url
+        Server.answer = {"token": TICKET, "wake": True}
+        d_offline.on_resume(pretend_alarm=True)
+        self.assertFalse(d_offline.state.get("sleeping"))
+        self.assertEqual(Server.bodies[0]["id"], "dev-offline1")
+        self.assertEqual(Server.bodies[-1], {"token": TICKET, "up": True})
+
 
 class SocketTest(unittest.TestCase):
     """The real socket protocol: one JSON object per line."""

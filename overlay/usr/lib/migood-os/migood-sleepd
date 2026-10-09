@@ -71,12 +71,22 @@ def log(msg):
 
 # ---------- the system: everything that touches the PC lives here ----------
 
+# Heavy 3rd-party game processes that can be paused during sleep without
+# freezing migood-games or the desktop/network stack.
+GAME_PROCS = ("steam", "wine", "wine64", "wineserver", "retroarch", "dolphin-emu", "PPSSPPQt", "ppsspp")
+
+
 class System:
     """Real PC. Tests use a fake with the same methods."""
     dry_run = False
+    connected_sleep = os.environ.get("MIGOOD_HARDWARE_SUSPEND") != "1"
 
     def __init__(self, user=None):
         self.user = user  # login name of the Migood user (for freeze/screen/toast)
+        self._sleep_gen = 0
+        self._inhibit_proc = None
+        self.on_resume_hook = lambda: None
+        self.on_touch_wake_hook = lambda: None
 
     def run(self, *cmd, timeout=15):
         try:
@@ -102,14 +112,75 @@ class System:
             log(f"RTC alarm not set: {e}")
 
     def clear_alarm(self):
+        self._sleep_gen += 1
+        self._stop_inhibit()
         try:
             with open("/sys/class/rtc/rtc0/wakealarm", "w") as f:
                 f.write("0")
         except OSError:
             pass
 
+    def _start_inhibit(self):
+        if self._inhibit_proc and self._inhibit_proc.poll() is None:
+            return
+        try:
+            self._inhibit_proc = subprocess.Popen([
+                "systemd-inhibit",
+                "--what=sleep:idle:handle-lid-switch",
+                "--who=Migood Sleep",
+                "--why=Keep internet connected for Migood Remote Play wake",
+                "sleep", "infinity",
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            self._inhibit_proc = None
+
+    def _stop_inhibit(self):
+        proc = self._inhibit_proc
+        self._inhibit_proc = None
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    def keep_network_alive(self):
+        """Ensure NetworkManager and Wi-Fi stay connected and never power down during sleep."""
+        self.run("nmcli", "networking", "on")
+        self.run("nmcli", "radio", "wifi", "on")
+        for path in glob.glob("/sys/class/net/wl*"):
+            iface = os.path.basename(path)
+            self.run("iw", "dev", iface, "set", "power_save", "off", timeout=5)
+
     def suspend(self):
-        self.run("systemctl", "suspend")
+        if not self.connected_sleep:
+            self._stop_inhibit()
+            self.run("systemctl", "suspend")
+            return
+        # Connected Low-Power Sleep: turn off screen, enable power-saver, inhibit
+        # hardware S3 suspend (which kills Wi-Fi/Ethernet), keep network alive,
+        # and watch for touch input or check-in intervals while online.
+        self._start_inhibit()
+        self.keep_network_alive()
+        self.screen(False)
+        self.freeze()
+        self.run("powerprofilesctl", "set", "power-saver", timeout=5)
+        self._sleep_gen += 1
+        gen = self._sleep_gen
+
+        def connected_loop():
+            # Wait up to 15s in 2s slices so physical touch wakes the PC in < 2s
+            # and remote wake from Migood Games is checked every ~15s with internet live.
+            for _ in range(7):
+                if gen != self._sleep_gen:
+                    return
+                if self.wait_for_touch(2):
+                    if gen == self._sleep_gen:
+                        self.on_touch_wake_hook()
+                    return
+            if gen == self._sleep_gen:
+                self.on_resume_hook()
+
+        threading.Thread(target=connected_loop, daemon=True).start()
 
     def _as_user(self, *cmd):
         """Run in the person's desktop session (screen, toast)."""
@@ -129,26 +200,40 @@ class System:
                       "--method", "org.freedesktop.DBus.Properties.Set",
                       "org.gnome.Mutter.DisplayConfig", "PowerSaveMode",
                       f"<int32 {0 if on else 3}>")
-
-    def _slice(self, action):
-        # The person's apps live in their systemd app.slice; the desktop itself
-        # (session.slice) and system services keep running.
-        if self.user:
-            self.run("systemctl", "--user", "-M", f"{self.user}@", action, "app.slice")
+        if on:
+            self.run("powerprofilesctl", "set", "balanced", timeout=5)
 
     def freeze(self):
-        self._slice("freeze")
+        # Pause heavy 3rd-party game binaries if running, but NEVER freeze app.slice
+        # because migood-games lives in app.slice and needs its network sockets open!
+        for proc in GAME_PROCS:
+            self.run("pkill", "-STOP", "-x", proc, timeout=5)
 
     def thaw(self):
-        self._slice("thaw")
+        self._stop_inhibit()
+        for proc in GAME_PROCS:
+            self.run("pkill", "-CONT", "-x", proc, timeout=5)
+        if self.user:
+            self.run("systemctl", "--user", "-M", f"{self.user}@", "thaw", "app.slice", timeout=5)
 
     def network_up(self, timeout):
-        """Wi-Fi on, wait until NetworkManager says the internet works."""
-        self.run("nmcli", "radio", "wifi", "on")
-        end = self.now() + timeout
+        """Keep Wi-Fi and NetworkManager on and verify internet/server reachability."""
+        self.keep_network_alive()
+        end = self.now() + max(1, timeout)
         while self.now() < end:
-            r = self.run("nmcli", "networking", "connectivity", "check", timeout=10)
-            if r and r.stdout.strip() == "full":
+            # 1. Direct check against Migood servers (most accurate)
+            try:
+                if any(migoodlib.test_server(s, timeout=4) for s in migoodlib.servers()):
+                    return True
+            except Exception:
+                pass
+            # 2. Check active default route in kernel routing table
+            rt = self.run("ip", "route", "show", "default", timeout=5)
+            if rt and rt.stdout.strip():
+                return True
+            # 3. Check NetworkManager connectivity / general state
+            r = self.run("nmcli", "-t", "-f", "STATE,CONNECTIVITY", "general", timeout=5)
+            if r and ("connected:full" in r.stdout or "connected:limited" in r.stdout or "connected:unknown" in r.stdout):
                 return True
             self.sleep(1)
         return False
@@ -193,6 +278,7 @@ class DryRunSystem(System):
     """Everything real except the sleep itself: no RTC alarm, and "suspend" is a
     10 s wait followed by a pretend alarm wake."""
     dry_run = True
+    connected_sleep = False
 
     def set_alarm(self, when):
         log(f"(dry run) would wake at {time.strftime('%H:%M:%S', time.localtime(when))}")
@@ -430,6 +516,7 @@ class Sleepd:
         self.lock = threading.Lock()
         self.state = self.load()
         system.on_resume_hook = lambda: self.on_resume(pretend_alarm=True)
+        system.on_touch_wake_hook = lambda: self.finish("touched")
 
     def get_token(self):
         return get_login_token(self.sys.user if self.sys else None)
@@ -471,8 +558,35 @@ class Sleepd:
         except OSError as e:
             log(f"save state: {e}")
 
+    def _register_sleep_ticket(self, login_tok, every, dev_id=None, name=None):
+        body = {
+            "id": (dev_id.strip() if isinstance(dev_id, str) and dev_id.strip() else None) or self.rp_device_id(),
+            "name": ((name.strip() if isinstance(name, str) and name.strip() else None) or socket.gethostname())[:40],
+            "every": every,
+            "kind": "os",
+        }
+        if self.server:
+            return migoodlib.api("/api/remote/sleep", body, token=login_tok, only=self.server, timeout=10)
+        return migoodlib.api("/api/remote/sleep", body, token=login_tok, timeout=10)
+
     # --- server ---
     def wake_check(self, up=False, battery=None, low=None):
+        pending_tok = self.state.get("pending_login_token")
+        if pending_tok:
+            try:
+                res = self._register_sleep_ticket(
+                    pending_tok,
+                    self.state.get("every", 5),
+                    dev_id=self.state.get("dev_id"),
+                    name=self.state.get("name"),
+                )
+                if isinstance(res, dict) and res.get("token"):
+                    with self.lock:
+                        self.state["token"] = res["token"]
+                        self.state.pop("pending_login_token", None)
+                        self.save()
+            except Exception as e:
+                log(f"deferred sleep ticket registration failed: {e}")
         tok = self.state.get("token") or self.get_token()
         body = {"token": tok}
         if up:
@@ -538,27 +652,25 @@ class Sleepd:
             return {"ok": False, "error": "bad every"}
 
         wake_ticket = token
+        pending_login_token = None
         # If token is not already a 48-char wake ticket, obtain one via POST /api/remote/sleep
         if not (isinstance(token, str) and len(token) == 48 and TOKEN_RE.match(token)):
             login_tok = (auth_token.strip() if isinstance(auth_token, str) and auth_token.strip() else None) or self.get_token() or token
             try:
-                body = {
-                    "id": (dev_id.strip() if isinstance(dev_id, str) and dev_id.strip() else None) or self.rp_device_id(),
-                    "name": ((name.strip() if isinstance(name, str) and name.strip() else None) or socket.gethostname())[:40],
-                    "every": every,
-                    "kind": "os",
-                }
-                if self.server:
-                    res = migoodlib.api("/api/remote/sleep", body, token=login_tok, only=self.server, timeout=10)
-                else:
-                    res = migoodlib.api("/api/remote/sleep", body, token=login_tok, timeout=10)
+                if hasattr(self.sys, "keep_network_alive"):
+                    self.sys.keep_network_alive()
+                res = self._register_sleep_ticket(login_tok, every, dev_id=dev_id, name=name)
                 if isinstance(res, dict) and res.get("token"):
                     wake_ticket = res["token"]
                     if isinstance(res.get("every"), int) and 2 <= res["every"] <= 30:
                         every = res["every"]
             except Exception as e:
                 log(f"register sleep note: {e}")
-                if not (isinstance(wake_ticket, str) and TOKEN_RE.match(wake_ticket)):
+                if isinstance(login_tok, str) and len(login_tok) >= 16 and " " not in login_tok:
+                    pending_login_token = login_tok
+                    if not TOKEN_RE.match(wake_ticket):
+                        wake_ticket = "pending_" + uuid.uuid4().hex
+                elif not (isinstance(wake_ticket, str) and TOKEN_RE.match(wake_ticket)):
                     return {"ok": False, "error": str(e)}
 
         if not isinstance(wake_ticket, str) or not TOKEN_RE.match(wake_ticket):
@@ -566,6 +678,10 @@ class Sleepd:
         with self.lock:
             self.state = {"token": wake_ticket, "every": every, "sleeping": True,
                           "since": int(self.sys.now()), "last": self.state.get("last")}
+            if pending_login_token:
+                self.state["pending_login_token"] = pending_login_token
+                self.state["dev_id"] = dev_id
+                self.state["name"] = name
             self.save()
         # Answer first, then sleep, so the app gets its reply.
         threading.Thread(target=self.go_to_sleep, args=(every, 2), daemon=True).start()
@@ -696,7 +812,8 @@ class Sleepd:
             pass
         with self.lock:
             self.state["every"] = every
-        if self.sys.wait_for_touch(WINDOW - (self.sys.now() - start)):
+        touch_wait = 1 if getattr(self.sys, "connected_sleep", False) else (WINDOW - (self.sys.now() - start))
+        if self.sys.wait_for_touch(touch_wait):
             return self.finish("touched")
         self.note("asleep")
         self.go_to_sleep(every)

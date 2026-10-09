@@ -23,6 +23,10 @@ on:
         description: "Publish to the Releases tab"
         type: boolean
         default: true
+      quick_update:
+        description: "Quick update only (build & publish update bundle without building an ISO)"
+        type: boolean
+        default: false
       from_scratch:
         description: "Build from scratch instead of updating the latest release ISO"
         type: boolean
@@ -59,9 +63,62 @@ jobs:
           bash -n tools/make-bundle.sh && bash -n tools/bundle-apply.sh && bash -n build/check-iso.sh
           python3 -m py_compile tools/publish-os.py
 
+  quick-update:
+    needs: test
+    if: github.event_name != 'pull_request' && inputs.quick_update
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build update bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          PREV="$(gh release list --limit 10 --json tagName -q '.[].tagName' \
+            | grep -vx "v$VERSION" | head -1 || true)"
+          [ -n "$PREV" ] || PREV="v0.1.0"
+          bash tools/make-bundle.sh "$PREV" "$VERSION"
+          ls -lh out/
+
+      - name: Publish update bundle to GitHub Releases
+        if: github.event_name == 'push' || inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Migood OS $VERSION quick update bundle.
+
+          Existing Migood OS PCs can install this update directly from **Migood Updates** (or via **Get from GitHub** -> **Install now**).
+          For a full USB installer ISO, see the latest full ISO release or run the workflow with \`quick_update\` unchecked.
+          EOF
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" out/* --clobber
+          else
+            gh release create "v$VERSION" out/* \
+              --title "Migood OS $VERSION (Quick Update)" --notes-file notes.md \
+              --prerelease --target "$GITHUB_SHA"
+          fi
+
+      - name: Publish update bundle to the Migood server
+        if: inputs.publish_server
+        env:
+          MIGOOD_OS_PUBLISH_KEY: ${{ secrets.MIGOOD_OS_PUBLISH_KEY }}
+          CHANNEL: ${{ inputs.server_channel }}
+        run: |
+          echo "Migood OS $VERSION quick system update." > server-notes.md
+          python3 tools/publish-os.py --version "$VERSION" --channel "$CHANNEL" \
+            --notes-file server-notes.md "out/migood-os-$VERSION-update.tar.gz"
+
   iso:
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !inputs.quick_update
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
@@ -83,8 +140,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)"
-          if [ -z "$TAG" ]; then echo "No release yet, building from scratch."; exit 0; fi
+          VERSION_CLEAN="${VERSION#v}"
+          TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" \
+            --jq '[.[] | select(.tag_name != "v'"$VERSION_CLEAN"'") | select(any(.assets[]; (.name | test("^migood-os-.*\\.iso(\\.part00)?$"))))][0].tag_name // empty' 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then echo "No release with an ISO found, building from scratch."; exit 0; fi
           mkdir -p base && cd base
           gh release download "$TAG" -p 'migood-os-*.iso' -p 'migood-os-*.iso.part*'
           if ls *.iso.part* >/dev/null 2>&1; then

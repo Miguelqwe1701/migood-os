@@ -25,8 +25,13 @@ say()  { printf '\n\033[1;32m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; WARNINGS+=("$*"); }
 WARNINGS=()
 
-# Install packages one by one so one missing package doesn't stop the rest.
+# Install packages in a single batch first (much faster), falling back to one by
+# one only if a package in the batch is unavailable.
 try_install() {
+  if apt-get install -y -q --no-install-recommends "$@" >/dev/null 2>&1; then
+    echo "   ok  $*"
+    return 0
+  fi
   for p in "$@"; do
     apt-get install -y --no-install-recommends "$p" >/dev/null \
       && echo "   ok  $p" || warn "could not install $p"
@@ -64,6 +69,10 @@ try_install gnome-shell-extension-manager gnome-shell-extension-gsconnect dconf-
 # come from extensions.gnome.org, the version made for this GNOME.
 SHELL_VER="$(dpkg-query -W -f='${Version}' gnome-shell | cut -d. -f1)"
 for uuid in dash-to-panel@jderose9.github.com arcmenu@arcmenu.com; do
+  if [ -f "/usr/share/gnome-shell/extensions/$uuid/metadata.json" ]; then
+    echo "   ok  $uuid (already installed)"
+    continue
+  fi
   url="$(curl -fsS "https://extensions.gnome.org/extension-info/?uuid=$uuid&shell_version=$SHELL_VER" \
     | python3 -c 'import sys,json; print(json.load(sys.stdin)["download_url"])')" \
     && curl -fsSL -o /tmp/ext.zip "https://extensions.gnome.org$url" \
@@ -98,12 +107,16 @@ if command -v flatpak >/dev/null; then
   # Bottles (Windows .exe games), Dolphin (GameCube/Wii) and PPSSPP (PSP) aren't Ubuntu
   # 24.04 packages, so they come from Flathub.
   for app in com.usebottles.bottles org.DolphinEmu.dolphin-emu org.ppsspp.PPSSPP; do
-    flatpak install -y --noninteractive flathub "$app" || warn "$app (flatpak) not installed"
+    if flatpak info "$app" >/dev/null 2>&1; then
+      echo "   ok  $app (already installed)"
+    else
+      flatpak install -y --noninteractive flathub "$app" || warn "$app (flatpak) not installed"
+    fi
   done
 fi
 
 say "4/10 System: low-RAM, snapshots, firewall"
-try_install zram-tools timeshift ufw unattended-upgrades
+try_install zram-tools timeshift ufw unattended-upgrades iw network-manager-config-connectivity-ubuntu
 # Installer (Calamares) + what it needs to put GRUB on BIOS and UEFI PCs,
 # encrypt the disk (optional) and use Btrfs (for Timeshift snapshots).
 try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shim-signed \
@@ -131,8 +144,12 @@ case "$BROWSER" in
   chromium)
     # Ubuntu's own chromium is a snap, and snaps can't install during a build.
     # The Flathub Chromium is a normal flatpak, so it can be preinstalled.
-    flatpak install -y --noninteractive flathub org.chromium.Chromium \
-      || warn "Chromium (flatpak) not installed"
+    if flatpak info org.chromium.Chromium >/dev/null 2>&1; then
+      echo "   ok  org.chromium.Chromium (already installed)"
+    else
+      flatpak install -y --noninteractive flathub org.chromium.Chromium \
+        || warn "Chromium (flatpak) not installed"
+    fi
     BROWSER_DESKTOP=org.chromium.Chromium.desktop ;;
   *) echo "BROWSER must be chrome or chromium"; exit 1 ;;
 esac
