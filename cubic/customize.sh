@@ -108,7 +108,8 @@ try_install zram-tools timeshift ufw unattended-upgrades
 # encrypt the disk (optional) and use Btrfs (for Timeshift snapshots).
 try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shim-signed \
   grub-pc-bin grub-efi-amd64-bin grub2-common efibootmgr os-prober cryptsetup \
-  cryptsetup-initramfs btrfs-progs dosfstools x11-xserver-utils console-setup zenity
+  cryptsetup-initramfs btrfs-progs dosfstools x11-xserver-utils console-setup zenity \
+  ubuntu-drivers-common pciutils
 # Quiet fans: the "Power Mode" service the fan controller (migood-fan) talks to.
 try_install power-profiles-daemon
 if [ -f /etc/default/zramswap ]; then
@@ -156,7 +157,8 @@ cp "$ASSETS"/fonts/Nunito-*.ttf "$ASSETS/fonts/OFL.txt" /usr/share/fonts/truetyp
 say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
-  /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan
+  /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
+  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
 install -d /usr/share/migood-os /usr/share/backgrounds/migood
@@ -176,7 +178,7 @@ rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
-  migood-battery-limit.service migood-sleepd.service migood-fan.service
+  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 # Overlay schema overrides (e.g. the login screen's Migood logo) take effect
 # only once compiled.

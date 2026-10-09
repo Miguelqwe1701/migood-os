@@ -1,0 +1,39 @@
+#!/bin/bash
+# Configures graphics drivers and boot options for gaming laptops and PCs.
+set -e
+
+# 1. Propagate Safe Graphics (nomodeset) if installer was booted with it
+if grep -qw "nomodeset" /proc/cmdline 2>/dev/null; then
+  echo "migood-graphics: Safe Graphics mode active during installation"
+  if [ -f /etc/default/grub ] && ! grep -qw "nomodeset" /etc/default/grub; then
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nomodeset"/' /etc/default/grub
+  fi
+fi
+
+# 2. Gaming laptops / NVIDIA GPUs: disable buggy nouveau KMS & disable Wayland in GDM
+# Vendor ID 10de = NVIDIA
+if command -v lspci >/dev/null 2>&1 && lspci -nn 2>/dev/null | grep -Ei "vga|3d|display" | grep -qi "10de"; then
+  echo "migood-graphics: NVIDIA hardware detected"
+  # If proprietary nvidia driver is not yet installed, prevent nouveau from hanging boot
+  if ! dpkg -l "nvidia-driver*" 2>/dev/null | grep -q "^ii"; then
+    if [ -f /etc/default/grub ] && ! grep -qw "nouveau.modeset=0" /etc/default/grub; then
+      sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nouveau.modeset=0"/' /etc/default/grub
+    fi
+    # GDM + Wayland + Nouveau causes black screen / freeze on boot; use Xorg
+    if [ -f /etc/gdm3/custom.conf ]; then
+      sed -i 's/^#\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf
+    fi
+  fi
+fi
+
+# 3. Always show GRUB menu (5s timeout) so user can pick Safe Graphics / Recovery if needed
+if [ -f /etc/default/grub ]; then
+  sed -i 's/^#\?GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+  sed -i 's/^#\?GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub
+  # Clean up extra spaces
+  sed -i 's/  */ /g' /etc/default/grub
+fi
+
+# 4. Refresh grub.cfg
+command -v update-grub >/dev/null 2>&1 && update-grub 2>/dev/null || true
+exit 0

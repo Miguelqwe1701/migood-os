@@ -1,0 +1,70 @@
+#!/bin/bash
+# Checks for proprietary hardware drivers (NVIDIA GPUs, Wi-Fi) and installs them
+# when connected to the internet.
+set -e
+
+STATE=/var/lib/migood-os
+MARKER="$STATE/drivers-checked"
+LOG=/var/log/migood-drivers.log
+
+mkdir -p "$STATE"
+
+# Only check once unless explicitly asked with --force
+if [ "${1:-}" != "--force" ] && [ -f "$MARKER" ]; then
+  exit 0
+fi
+
+echo "=== Migood driver check started at $(date) ===" >> "$LOG"
+
+# Wait up to 30 seconds for network if running at boot
+online=false
+for _ in $(seq 1 15); do
+  if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || curl -s --head --max-time 3 http://archive.ubuntu.com >/dev/null 2>&1; then
+    online=true
+    break
+  fi
+  sleep 2
+done
+
+if [ "$online" != "true" ]; then
+  echo "Offline, skipping driver installation for now." >> "$LOG"
+  exit 0
+fi
+
+# Detect NVIDIA GPU
+has_nvidia=false
+if command -v lspci >/dev/null 2>&1 && lspci -d 10de: >/dev/null 2>&1; then
+  has_nvidia=true
+fi
+
+if [ "$has_nvidia" = "true" ]; then
+  echo "NVIDIA GPU found. Checking installed drivers..." >> "$LOG"
+  if ! dpkg -l "nvidia-driver*" 2>/dev/null | grep -q "^ii"; then
+    echo "Installing recommended NVIDIA driver via ubuntu-drivers..." >> "$LOG"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q >> "$LOG" 2>&1 || true
+    if command -v ubuntu-drivers >/dev/null 2>&1; then
+      ubuntu-drivers install >> "$LOG" 2>&1 || true
+    else
+      apt-get install -y --no-install-recommends ubuntu-drivers-common >> "$LOG" 2>&1 || true
+      ubuntu-drivers install >> "$LOG" 2>&1 || true
+    fi
+
+    # If nvidia-driver was successfully installed:
+    if dpkg -l "nvidia-driver*" 2>/dev/null | grep -q "^ii"; then
+      echo "NVIDIA driver installed successfully! Updating boot configuration..." >> "$LOG"
+      # Remove fallback nouveau.modeset=0 / nomodeset now that official driver is active
+      if [ -f /etc/default/grub ]; then
+        sed -i 's/nouveau.modeset=0//g; s/nomodeset//g' /etc/default/grub
+        sed -i 's/  */ /g' /etc/default/grub
+        update-grub >> "$LOG" 2>&1 || true
+      fi
+    fi
+  else
+    echo "NVIDIA driver is already installed." >> "$LOG"
+  fi
+fi
+
+touch "$MARKER"
+echo "=== Migood driver check completed at $(date) ===" >> "$LOG"
+exit 0

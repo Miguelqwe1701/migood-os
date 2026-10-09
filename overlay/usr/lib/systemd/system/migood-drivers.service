@@ -1,0 +1,14 @@
+[Unit]
+Description=Migood OS automated driver detector
+After=network-online.target
+Wants=network-online.target
+ConditionKernelCommandLine=!boot=casper
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/migood-drivers
+TimeoutSec=600
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
