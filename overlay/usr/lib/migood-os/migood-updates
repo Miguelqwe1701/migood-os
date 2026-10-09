@@ -77,7 +77,7 @@ def ago(ts):
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Migood Updates",
-                         default_width=560, default_height=640)
+                         default_width=560, default_height=680)
         view = Adw.ToolbarView()
         view.add_top_bar(Adw.HeaderBar())
         self.set_content(view)
@@ -107,10 +107,18 @@ class Window(Adw.ApplicationWindow):
         self.check_btn = Gtk.Button(label="Check for updates",
                                     css_classes=["pill-button"])
         self.check_btn.connect("clicked", self.on_check)
-        self.restart_btn = Gtk.Button(label="Restart to install",
+        self.github_btn = Gtk.Button(label="Get from GitHub",
+                                     css_classes=["pill-button"])
+        self.github_btn.connect("clicked", self.on_check_github)
+        self.install_btn = Gtk.Button(label="Install now",
                                       css_classes=["pill-button", "suggested-action"])
+        self.install_btn.connect("clicked", self.on_install_now)
+        self.restart_btn = Gtk.Button(label="Restart to install",
+                                      css_classes=["pill-button"])
         self.restart_btn.connect("clicked", self.on_restart)
         buttons.append(self.check_btn)
+        buttons.append(self.github_btn)
+        buttons.append(self.install_btn)
         buttons.append(self.restart_btn)
         box.append(buttons)
 
@@ -118,9 +126,14 @@ class Window(Adw.ApplicationWindow):
         self.version_row = Adw.ActionRow(title="Migood OS version")
         self.channel_row = Adw.ActionRow(title="Update channel")
         self.checked_row = Adw.ActionRow(title="Last checked")
+        gh_note = Adw.ActionRow(
+            title="GitHub Releases fallback",
+            subtitle="Getting updates from GitHub always pulls the latest release/pre-release "
+                     "directly from GitHub, no matter the channel or rollout (that is how GitHub works)."
+        )
         sec = Adw.ActionRow(title="Security fixes from Ubuntu",
                             subtitle="Install automatically in the background")
-        for r in (self.version_row, self.channel_row, self.checked_row, sec):
+        for r in (self.version_row, self.channel_row, self.checked_row, gh_note, sec):
             group.add(r)
         box.append(group)
 
@@ -133,40 +146,73 @@ class Window(Adw.ApplicationWindow):
         staged = st.get("staged") or []
         if staged:
             newest = staged[-1]
-            self.title.set_label(f"Migood OS {newest['version']} is ready")
-            self.subtitle.set_label(newest.get("notes") or "Restart your computer to finish installing.")
+            src = " (from GitHub)" if newest.get("source") == "github" else ""
+            self.title.set_label(f"Migood OS {newest['version']} is ready{src}")
+            self.subtitle.set_label(
+                newest.get("notes")
+                or "Click Install now to apply immediately, or Restart to install at shutdown."
+            )
         else:
             title, sub = MESSAGES.get(st.get("result"), MESSAGES["error"])
             self.title.set_label(title)
             self.subtitle.set_label(sub)
+        self.install_btn.set_visible(bool(staged))
         self.restart_btn.set_visible(bool(staged))
         self.version_row.set_subtitle(os_version())
         channel = st.get("channel") or "stable"
         self.channel_row.set_subtitle("Beta (Migood Beta members)" if channel == "beta" else "Stable")
         self.checked_row.set_subtitle(ago(st.get("checked_at")))
 
+    def _set_busy(self, busy, label=None, sub=""):
+        if busy:
+            self.waiting_since = int(time.time())
+            self.check_btn.set_sensitive(False)
+            self.github_btn.set_sensitive(False)
+            self.install_btn.set_sensitive(False)
+            self.spinner.start()
+            if label:
+                self.title.set_label(label)
+                self.subtitle.set_label(sub)
+        else:
+            self.waiting_since = None
+            self.spinner.stop()
+            self.check_btn.set_sensitive(True)
+            self.github_btn.set_sensitive(True)
+            self.install_btn.set_sensitive(True)
+
     def tick(self):
         if self.waiting_since:
             st = read_status()
             if st.get("checked_at", 0) >= self.waiting_since or time.time() - self.waiting_since > 300:
-                self.waiting_since = None
-                self.spinner.stop()
-                self.check_btn.set_sensitive(True)
+                self._set_busy(False)
         self.refresh()
         return True
 
     def on_check(self, _btn):
-        self.waiting_since = int(time.time())
-        self.check_btn.set_sensitive(False)
-        self.spinner.start()
-        self.title.set_label("Checking for updates…")
-        self.subtitle.set_label("")
+        self._set_busy(True, "Checking for updates…")
         try:
             subprocess.Popen(["systemctl", "start", "--no-block", "migood-os-update.service"])
         except OSError:
-            self.waiting_since = None
-            self.spinner.stop()
-            self.check_btn.set_sensitive(True)
+            self._set_busy(False)
+
+    def on_check_github(self, _btn):
+        self._set_busy(
+            True,
+            "Checking GitHub Releases…",
+            "Note: Getting from GitHub downloads the latest release/pre-release directly from GitHub, "
+            "no matter the cost or channel, because that is how GitHub Releases works."
+        )
+        try:
+            subprocess.Popen(["systemctl", "start", "--no-block", "migood-os-update-github.service"])
+        except OSError:
+            self._set_busy(False)
+
+    def on_install_now(self, _btn):
+        self._set_busy(True, "Installing update…", "Applying the staged update bundle now.")
+        try:
+            subprocess.Popen(["systemctl", "start", "--no-block", "migood-os-apply-now.service"])
+        except OSError:
+            self._set_busy(False)
 
     def on_restart(self, _btn):
         # GNOME's own "Restart?" dialog, so open work can be saved first.

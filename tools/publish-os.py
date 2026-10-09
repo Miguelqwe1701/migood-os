@@ -25,13 +25,15 @@ import urllib.error
 import urllib.request
 
 BASE = os.environ.get("MIGOOD_PUBLISH_SERVER", "https://www.welltypers.it.com").rstrip("/")
+BACKUP = os.environ.get("MIGOOD_PUBLISH_BACKUP", "https://wth5zs3z-3001.usw3.devtunnels.ms").rstrip("/")
+RETRY_CODES = {0, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 
 
-def call(method, path, body=None, raw=None, timeout=300):
+def call(method, path, body=None, raw=None, timeout=300, base=None):
     """One request. Returns (status code, JSON answer)."""
     key = os.environ["MIGOOD_OS_PUBLISH_KEY"]
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers={
+    req = urllib.request.Request((base or BASE) + path, data=data, method=method, headers={
         "Authorization": "Bearer " + key,
         "Content-Type": "application/octet-stream" if raw is not None else "application/json",
         "User-Agent": "migood-os-publish"})
@@ -43,6 +45,8 @@ def call(method, path, body=None, raw=None, timeout=300):
             return e.code, json.loads(e.read() or b"{}")
         except ValueError:
             return e.code, {}
+    except (urllib.error.URLError, OSError) as e:
+        return 0, {"error": str(e)}
 
 
 def sha256_of(path):
@@ -55,9 +59,10 @@ def sha256_of(path):
 
 def upload(path, tries=5):
     name, size = os.path.basename(path), os.path.getsize(path)
+    sha = sha256_of(path)
     print(f"uploading {name} ({size} bytes)", flush=True)
     code, s = call("POST", "/api/os/publish/upload",
-                   {"name": name, "size": size, "sha256": sha256_of(path)})
+                   {"name": name, "size": size, "sha256": sha})
     if code == 200 and s.get("done"):
         print(f"  {name} is already on the server", flush=True)
         return s["file"]
@@ -68,10 +73,7 @@ def upload(path, tries=5):
     with open(path, "rb") as f:
         while got < size:
             f.seek(got)
-            try:
-                code, r = call("PUT", f"/api/os/publish/upload/{uid}?offset={got}", raw=f.read(step))
-            except (urllib.error.URLError, OSError) as e:  # connection dropped mid-chunk
-                code, r = 0, {"error": str(e)}
+            code, r = call("PUT", f"/api/os/publish/upload/{uid}?offset={got}", raw=f.read(step))
             if code in (200, 409) and "received" in r:  # 409 = carry on from the server's count
                 got, failures = int(r["received"]), 0
                 print(f"  {got * 100 // size}%", flush=True)
@@ -84,10 +86,26 @@ def upload(path, tries=5):
             if code == 200 and "received" in r:
                 got = int(r["received"])
     code, r = call("POST", f"/api/os/publish/upload/{uid}/finish")
-    if code != 200:
-        sys.exit(f"finishing {name} failed: {code} {r}"
-                 + (" (bytes didn't match: thrown away, upload again)" if code == 422 else ""))
-    return r["file"]
+    if code == 200 and "file" in r:
+        return r["file"]
+    # Cloudflare returns 524 after 100s while the server hashes a 4 GB file in the background.
+    # Poll /api/os/publish/upload to see if hashing completed, or retry /finish via backup.
+    for attempt in range(1, 9):
+        if code not in RETRY_CODES:
+            break
+        print(f"  waiting for server to finish hashing {name} (status {code}, check {attempt}/8)...", flush=True)
+        time.sleep(15)
+        chk_code, chk = call("POST", "/api/os/publish/upload",
+                             {"name": name, "size": size, "sha256": sha})
+        if chk_code == 200 and chk.get("done") and "file" in chk:
+            print(f"  {name} finished on server", flush=True)
+            return chk["file"]
+        target_base = BACKUP if (attempt >= 2 and BACKUP and BACKUP != BASE) else BASE
+        code, r = call("POST", f"/api/os/publish/upload/{uid}/finish", base=target_base)
+        if code == 200 and "file" in r:
+            return r["file"]
+    sys.exit(f"finishing {name} failed: {code} {r}"
+             + (" (bytes didn't match: thrown away, upload again)" if code == 422 else ""))
 
 
 def main(argv):

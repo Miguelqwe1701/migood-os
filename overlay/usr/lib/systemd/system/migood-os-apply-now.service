@@ -1,0 +1,9 @@
+[Unit]
+Description=Migood OS: install staged updates immediately
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/update apply
+TimeoutStartSec=30min
+

@@ -34,6 +34,7 @@ command line or in the person's home.
   migood-sleepd --rescue   thaw the apps and turn the screen on, then exit
 """
 import glob
+import hashlib
 import json
 import os
 import pwd
@@ -45,6 +46,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migoodlib  # noqa: E402
@@ -53,12 +55,14 @@ PROTOCOL = 1
 STATE_DIR = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
 STATE = os.path.join(STATE_DIR, "wake.json")
 SOCK = os.environ.get("MIGOOD_SLEEPD_SOCK", "/run/migood/sleepd.sock")
+ASAR_PATH = os.environ.get("MIGOOD_GAMES_ASAR", "/opt/migood-games/resources/app.asar")
 WINDOW = 30          # seconds from resume to decide (the owner's number)
 NET_WAIT = 20        # seconds to wait for the network
 RTC_SLACK = 60       # a resume this close to the alarm was caused by it
 BATTERY_EVERY = 15   # minutes between check-ins on battery
 LOW_BATTERY = 15     # percent: below this, stop checking in (stay asleep)
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+LEVELDB_TOKEN_RE = re.compile(rb"mg_token[\x00-\x20]{1,16}([A-Za-z0-9._-]{20,512})")
 
 
 def log(msg):
@@ -225,12 +229,14 @@ def migood_user():
 
 def get_login_token(user=None):
     """Retrieve the Migood login token, the same way migood-ai,
-    migood-settings, and update do. First check user's ~/.config/migood/token,
-    then /var/lib/migood-os/token."""
+    migood-settings, and update do. Checks user's ~/.config/migood/token,
+    /var/lib/migood-os/token, and as a fallback Migood Games' Local Storage."""
     candidates = []
+    homes = []
     if user:
         try:
             home = pwd.getpwnam(user).pw_dir
+            homes.append(home)
             candidates.append(os.path.join(home, ".config/migood/token"))
         except (KeyError, OSError):
             pass
@@ -245,7 +251,176 @@ def get_login_token(user=None):
                     return val
         except OSError:
             pass
+
+    for home in homes:
+        patterns = [
+            os.path.join(home, ".config", "*igood*", "Local Storage", "leveldb", "*"),
+            os.path.join(home, ".config", "chromium", "*", "Local Storage", "leveldb", "*"),
+        ]
+        ldb_files = []
+        for pat in patterns:
+            ldb_files.extend(p for p in glob.glob(pat) if p.endswith((".log", ".ldb")))
+        ldb_files.sort(key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+        for p in ldb_files:
+            try:
+                with open(p, "rb") as f:
+                    matches = LEVELDB_TOKEN_RE.findall(f.read())
+                if matches:
+                    return matches[-1].decode("ascii", errors="ignore").strip()
+            except OSError:
+                pass
     return None
+
+
+def _asar_integrity(data):
+    block_size = 4 * 1024 * 1024
+    blocks = [
+        hashlib.sha256(data[i:i + block_size]).hexdigest()
+        for i in range(0, max(1, len(data)), block_size)
+    ]
+    return {
+        "algorithm": "SHA256",
+        "hash": hashlib.sha256(data).hexdigest(),
+        "blockSize": block_size,
+        "blocks": blocks,
+    }
+
+
+def patch_migood_games_app(asar_path=None):
+    """Ensure Migood Games' wake.js and wake_migoodos.js send the Bearer token
+    from localStorage / ~/.config/migood/token and fall back to migood-sleepd."""
+    asar_path = asar_path or ASAR_PATH
+    if not os.path.exists(asar_path):
+        return False
+    try:
+        with open(asar_path, "rb") as f:
+            raw = f.read()
+        if len(raw) < 16:
+            return False
+        _, u1, _, u3 = struct.unpack("<IIII", raw[:16])
+        base = 8 + u1
+        hdr = json.loads(raw[16:16 + u3].decode("utf-8"))
+        files = hdr.get("files") or {}
+        w_info = files.get("wake.js")
+        wm_info = files.get("wake_migoodos.js")
+        if not w_info or not wm_info or "offset" not in w_info or "offset" not in wm_info:
+            return False
+        w_off, w_sz = int(w_info["offset"]), int(w_info["size"])
+        wm_off, wm_sz = int(wm_info["offset"]), int(wm_info["size"])
+        w_src = raw[base + w_off:base + w_off + w_sz].decode("utf-8").replace("\r\n", "\n")
+        wm_src = raw[base + wm_off:base + wm_off + wm_sz].decode("utf-8").replace("\r\n", "\n")
+        if "MIGOOD_SLEEP_AUTH_PATCH_V2" in w_src and "MIGOOD_SLEEP_AUTH_PATCH_V2" in wm_src:
+            return False
+
+        old_get_ticket = (
+            'async function getTicket(every, name, kind) {\n'
+            '  const win = pageWindows().find((w) => w && !w.isDestroyed() && (w.webContents.getURL() || "").startsWith(SITE));\n'
+            '  if (!win) return { error: "Open Migood Games first (it needs to be signed in)." };\n'
+            '  const js = `(async () => {\n'
+            '    let id = localStorage.getItem("mg_rp_device");\n'
+            '    if (!id) { id = "dev-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("mg_rp_device", id); }\n'
+            '    const r = await fetch("/api/remote/sleep", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },\n'
+            '      body: JSON.stringify({ id, name: ${JSON.stringify(String(name).slice(0, 40))}, every: ${every | 0}, kind: ${JSON.stringify(kind === "os" ? "os" : "pc")} }) });\n'
+            '    const d = await r.json().catch(() => ({}));\n'
+            '    return r.ok && d.token ? { token: String(d.token), every: d.every | 0 } : { error: d.error || ("Migood said " + r.status) };\n'
+            '  })()`;\n'
+            '  try { return await win.webContents.executeJavaScript(js, true); } catch (e) { return { error: "Couldn\'t reach Migood." }; }\n'
+            '}'
+        )
+        new_get_ticket = (
+            'async function getTicket(every, name, kind) { /* MIGOOD_SLEEP_AUTH_PATCH_V2 */\n'
+            '  let osTok = "";\n'
+            '  try { osTok = fs.readFileSync(path.join(os.homedir(), ".config/migood/token"), "utf8").trim(); } catch (e) {}\n'
+            '  const win = pageWindows().find((w) => w && !w.isDestroyed() && (w.webContents.getURL() || "").startsWith(SITE));\n'
+            '  if (!win) return { error: "Open Migood Games first (it needs to be signed in).", authToken: osTok };\n'
+            '  const js = `(async () => {\n'
+            '    let id = localStorage.getItem("mg_rp_device");\n'
+            '    if (!id) { id = "dev-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("mg_rp_device", id); }\n'
+            '    let tok = localStorage.getItem("mg_token") || ${JSON.stringify(osTok)};\n'
+            '    if (tok && !localStorage.getItem("mg_token")) localStorage.setItem("mg_token", tok);\n'
+            '    const hdrs = { "Content-Type": "application/json" };\n'
+            '    if (tok) hdrs["Authorization"] = "Bearer " + tok;\n'
+            '    const r = await fetch("/api/remote/sleep", { method: "POST", credentials: "include", headers: hdrs,\n'
+            '      body: JSON.stringify({ id, name: ${JSON.stringify(String(name).slice(0, 40))}, every: ${every | 0}, kind: ${JSON.stringify(kind === "os" ? "os" : "pc")} }) });\n'
+            '    const d = await r.json().catch(() => ({}));\n'
+            '    return r.ok && d.token ? { token: String(d.token), every: d.every | 0, authToken: tok, id } : { error: d.error || ("Migood said " + r.status), authToken: tok, id };\n'
+            '  })()`;\n'
+            '  try { return await win.webContents.executeJavaScript(js, true); } catch (e) { return { error: "Couldn\'t reach Migood.", authToken: osTok }; }\n'
+            '}'
+        )
+        old_sleep_now = (
+            'async function sleepNow(opts, getTicket, name) {\n'
+            '  const i = await info();\n'
+            '  if (!i.supported) {\n'
+            '    return { error: i.why === "migood-os-only" ? "Sleep & wake from anywhere comes with Migood OS." : "Migood OS\'s sleep service isn\'t answering: " + (i.error || "unknown") };\n'
+            '  }\n'
+            '  const every = Math.max(2, Math.min(30, (opts && opts.every | 0) || 5));\n'
+            '  const t = await getTicket(every, name, "os");\n'
+            '  if (!t || !t.token) return { error: (t && t.error) || "Couldn\'t get ready to sleep." };\n'
+            '  const r = await ask({ cmd: "sleep", token: t.token, every: t.every || every });\n'
+            '  return r && r.ok ? { ok: true } : { error: (r && r.error) || "Migood OS didn\'t go to sleep." };\n'
+            '}'
+        )
+        new_sleep_now = (
+            'async function sleepNow(opts, getTicket, name) { /* MIGOOD_SLEEP_AUTH_PATCH_V2 */\n'
+            '  const i = await info();\n'
+            '  if (!i.supported) {\n'
+            '    return { error: i.why === "migood-os-only" ? "Sleep & wake from anywhere comes with Migood OS." : "Migood OS\'s sleep service isn\'t answering: " + (i.error || "unknown") };\n'
+            '  }\n'
+            '  const every = Math.max(2, Math.min(30, (opts && opts.every | 0) || 5));\n'
+            '  const t = (await Promise.resolve(getTicket(every, name, "os")).catch(() => ({}))) || {};\n'
+            '  if (t.authToken) await ask({ cmd: "set-token", token: t.authToken }).catch(() => ({}));\n'
+            '  const r = await ask({ cmd: "sleep", token: t.token || "", auth_token: t.authToken || "", id: t.id || "", name: name || "", every: t.every || every });\n'
+            '  return r && r.ok ? { ok: true } : { error: (r && r.error) || t.error || "Migood OS didn\'t go to sleep." };\n'
+            '}'
+        )
+
+        if old_get_ticket in w_src:
+            w_src = w_src.replace(old_get_ticket, new_get_ticket, 1)
+        elif "MIGOOD_SLEEP_AUTH_PATCH_V2" not in w_src:
+            return False
+
+        if old_sleep_now in wm_src:
+            wm_src = wm_src.replace(old_sleep_now, new_sleep_now, 1)
+        elif "MIGOOD_SLEEP_AUTH_PATCH_V2" not in wm_src:
+            return False
+
+        w_bytes = w_src.encode("utf-8")
+        wm_bytes = wm_src.encode("utf-8")
+        payload_len = len(raw) - base
+        if min(w_off, wm_off) == w_off and max(w_off + w_sz, wm_off + wm_sz) == payload_len:
+            prefix = raw[base:base + w_off]
+            new_w_off = w_off
+        else:
+            prefix = raw[base:]
+            new_w_off = len(prefix)
+        new_wm_off = new_w_off + len(w_bytes)
+
+        w_info["offset"] = str(new_w_off)
+        w_info["size"] = len(w_bytes)
+        w_info["integrity"] = _asar_integrity(w_bytes)
+        wm_info["offset"] = str(new_wm_off)
+        wm_info["size"] = len(wm_bytes)
+        wm_info["integrity"] = _asar_integrity(wm_bytes)
+
+        hdr_bytes = json.dumps(hdr, separators=(",", ":")).encode("utf-8")
+        pad = (4 - (len(hdr_bytes) % 4)) % 4
+        padded_hdr = hdr_bytes + (b"\x00" * pad)
+        new_hdr = struct.pack("<IIII", 4, len(padded_hdr) + 8, len(padded_hdr) + 4, len(hdr_bytes)) + padded_hdr
+
+        tmp = asar_path + ".new"
+        with open(tmp, "wb") as f:
+            f.write(new_hdr)
+            f.write(prefix)
+            f.write(w_bytes)
+            f.write(wm_bytes)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, asar_path)
+        log(f"patched {asar_path} for Remote Play sleep auth")
+        return True
+    except Exception as e:
+        log(f"could not patch {asar_path}: {e}")
+        return False
 
 
 class Sleepd:
@@ -258,6 +433,24 @@ class Sleepd:
 
     def get_token(self):
         return get_login_token(self.sys.user if self.sys else None)
+
+    def rp_device_id(self):
+        path = os.path.join(STATE_DIR, "rp-device-id")
+        try:
+            with open(path) as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except OSError:
+            pass
+        dev = "dev-" + uuid.uuid4().hex[:10]
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(path, "w") as f:
+                f.write(dev + "\n")
+        except OSError:
+            pass
+        return dev
 
     # --- state file ---
     def load(self):
@@ -332,9 +525,11 @@ class Sleepd:
         except OSError as e:
             return {"ok": False, "error": str(e)}
 
-    def cmd_sleep(self, token, every):
+    def cmd_sleep(self, token, every, auth_token=None, dev_id=None, name=None):
+        if auth_token and isinstance(auth_token, str) and auth_token.strip():
+            self.cmd_set_token(auth_token.strip())
         if not token:
-            token = self.get_token()
+            token = (auth_token.strip() if isinstance(auth_token, str) and auth_token.strip() else None) or self.get_token()
         if not token:
             return {"ok": False, "error": "You must be logged in."}
         try:
@@ -343,18 +538,28 @@ class Sleepd:
             return {"ok": False, "error": "bad every"}
 
         wake_ticket = token
-        # If token is not already a 48-char wake ticket, attempt to obtain one via /api/remote/sleep
+        # If token is not already a 48-char wake ticket, obtain one via POST /api/remote/sleep
         if not (isinstance(token, str) and len(token) == 48 and TOKEN_RE.match(token)):
+            login_tok = (auth_token.strip() if isinstance(auth_token, str) and auth_token.strip() else None) or self.get_token() or token
             try:
-                body = {"every": every, "kind": "os", "name": socket.gethostname()}
+                body = {
+                    "id": (dev_id.strip() if isinstance(dev_id, str) and dev_id.strip() else None) or self.rp_device_id(),
+                    "name": ((name.strip() if isinstance(name, str) and name.strip() else None) or socket.gethostname())[:40],
+                    "every": every,
+                    "kind": "os",
+                }
                 if self.server:
-                    res = migoodlib.api("/api/remote/sleep", body, token=token, only=self.server, timeout=10)
+                    res = migoodlib.api("/api/remote/sleep", body, token=login_tok, only=self.server, timeout=10)
                 else:
-                    res = migoodlib.api("/api/remote/sleep", body, token=token, timeout=10)
+                    res = migoodlib.api("/api/remote/sleep", body, token=login_tok, timeout=10)
                 if isinstance(res, dict) and res.get("token"):
                     wake_ticket = res["token"]
+                    if isinstance(res.get("every"), int) and 2 <= res["every"] <= 30:
+                        every = res["every"]
             except Exception as e:
                 log(f"register sleep note: {e}")
+                if not (isinstance(wake_ticket, str) and TOKEN_RE.match(wake_ticket)):
+                    return {"ok": False, "error": str(e)}
 
         if not isinstance(wake_ticket, str) or not TOKEN_RE.match(wake_ticket):
             return {"ok": False, "error": "bad token"}
@@ -388,7 +593,10 @@ class Sleepd:
         if cmd in ("login", "set-token"):
             return self.cmd_set_token(req.get("token"))
         if cmd == "sleep":
-            return self.cmd_sleep(req.get("token"), req.get("every"))
+            return self.cmd_sleep(req.get("token"), req.get("every"),
+                                  auth_token=req.get("auth_token"),
+                                  dev_id=req.get("id"),
+                                  name=req.get("name"))
         if cmd == "cancel":
             return self.cmd_cancel()
         if cmd == "resumed" and uid == 0:
@@ -559,8 +767,12 @@ def client(daemon, conn, owner):
 
 
 def main(argv):
+    if "--patch-app" in argv:
+        patch_migood_games_app()
+        return
     if os.geteuid() != 0:
         sys.exit("migood-sleepd must run as root")
+    patch_migood_games_app()
     system = DryRunSystem() if "--dry-run" in argv else System()
     system.user = migood_user()
     daemon = Sleepd(system)

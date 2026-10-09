@@ -295,6 +295,57 @@ class UpdaterTest(unittest.TestCase):
     def test_version_order(self):
         self.assertLess(self.up.version_key("0.9.0"), self.up.version_key("0.10.0"))
 
+    def test_github_releases_fallback_and_check_github(self):
+        bundle = make_bundle(self.marker)
+        sha = hashlib.sha256(bundle).hexdigest()
+
+        class FakeGitHub(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                base = f"http://127.0.0.1:{self.server.server_port}"
+                if self.path == "/releases":
+                    body = json.dumps([{
+                        "tag_name": "v0.2.0",
+                        "draft": False,
+                        "prerelease": True,
+                        "assets": [
+                            {"name": "migood-os-0.2.0-update.tar.gz", "browser_download_url": f"{base}/asset/bundle.tar.gz"},
+                            {"name": "migood-os-0.2.0-update.tar.gz.sha256", "browser_download_url": f"{base}/asset/bundle.sha256"},
+                        ],
+                    }]).encode()
+                elif self.path == "/asset/bundle.tar.gz":
+                    body = bundle
+                elif self.path == "/asset/bundle.sha256":
+                    body = f"{sha}  migood-os-0.2.0-update.tar.gz\n".encode()
+                else:
+                    return self.send_error(404)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        gh = ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+        threading.Thread(target=gh.serve_forever, daemon=True).start()
+        try:
+            with open(self.conf, "w") as f:
+                f.write(f"SERVER=http://127.0.0.1:{self.httpd.server_port}\n"
+                        f"CHANNEL=beta\n"
+                        f"GITHUB_RELEASES=http://127.0.0.1:{gh.server_port}/releases\n")
+            # Server has no releases -> falls back to GitHub Releases and stages 0.2.0
+            self.assertEqual(self.up.main(["update", "check"]), 0)
+            self.assertEqual(self.up.staged_versions(), ["0.2.0"])
+            with open(self.status) as f:
+                st = json.load(f)
+            self.assertEqual(st["staged"][0]["source"], "github")
+            self.assertIn("latest release/pre-release", st["staged"][0]["notes"])
+            self.assertEqual(self.up.cmd_apply(), 0)
+            self.assertEqual(self.version(), "0.2.0")
+        finally:
+            gh.shutdown()
+            gh.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

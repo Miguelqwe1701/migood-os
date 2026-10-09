@@ -170,18 +170,23 @@ jobs:
           CHANNEL: ${{ inputs.server_channel }}
         run: |
           ISO="full/migood-os-$VERSION.iso"; [ -f "$ISO" ] || ISO="out/migood-os-$VERSION.iso"
-          FILES=("$ISO")
+          FILES=()
           [ -f "out/migood-os-$VERSION-update.tar.gz" ] && FILES+=("out/migood-os-$VERSION-update.tar.gz")
-          # The system file by itself: the installer downloads it when a USB stick
-          # is damaged. (work/ belongs to root: link it, don't copy 4 GB.)
-          SQ="full/migood-os-$VERSION-filesystem.squashfs"
-          mkdir -p full && sudo ln -f work/iso/casper/filesystem.squashfs "$SQ" && FILES+=("$SQ")
+          FILES+=("$ISO")
           APP="$(cat work/migood-games.version 2>/dev/null || true)"
           [ "$APP" = unknown ] && APP=""
           # Short notes for the PCs' Migood Updates app (not the GitHub download help).
           echo "Migood OS $VERSION (based on Ubuntu 24.04)${APP:+. Comes with the Migood Games app $APP}." > server-notes.md
+          # Publish the update bundle + ISO first so PCs immediately get the update.
           python3 tools/publish-os.py --version "$VERSION" --channel "$CHANNEL" \
             --notes-file server-notes.md ${APP:+--app-version "$APP"} "${FILES[@]}"
+          # Then also attach the 4 GB spare system file for the USB installer (non-blocking if it times out).
+          SQ="full/migood-os-$VERSION-filesystem.squashfs"
+          if mkdir -p full && sudo ln -f work/iso/casper/filesystem.squashfs "$SQ"; then
+            python3 tools/publish-os.py --version "$VERSION" --channel "$CHANNEL" \
+              --notes-file server-notes.md ${APP:+--app-version "$APP"} "${FILES[@]}" "$SQ" \
+              || echo "::warning title=Squashfs upload::Update bundle + ISO are live, but spare squashfs timed out"
+          fi
           rm -rf full
 
       # Screenshots come last, after the release is published, so a problem
