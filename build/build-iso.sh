@@ -94,12 +94,16 @@ echo migood-os > "$CH/etc/hostname"
 
 say "2. Kernel, live-boot (casper) and GNOME desktop"
 in_chroot apt-get update -q
-in_chroot apt-get install -y -q --no-install-recommends \
-  linux-generic casper discover laptop-detect os-prober \
-  network-manager wpasupplicant locales sudo curl ca-certificates gpg \
-  software-properties-common fontconfig dconf-cli plymouth plymouth-theme-spinner \
-  >/dev/null
-in_chroot apt-get install -y -q ubuntu-desktop-minimal >/dev/null
+if [ -n "${BASE_ISO:-}" ] && in_chroot dpkg-query -W gnome-shell casper >/dev/null 2>&1; then
+  echo "   Base ISO already has kernel, casper and GNOME desktop; skipping base package install."
+else
+  in_chroot apt-get install -y -q --no-install-recommends \
+    linux-generic casper discover laptop-detect os-prober \
+    network-manager wpasupplicant locales sudo curl ca-certificates gpg \
+    software-properties-common fontconfig dconf-cli plymouth plymouth-theme-spinner \
+    >/dev/null
+  in_chroot apt-get install -y -q ubuntu-desktop-minimal >/dev/null
+fi
 # The live session logs in as "migood" automatically.
 cat > "$CH/etc/casper.conf" <<'EOF'
 export USERNAME="migood"
@@ -140,6 +144,7 @@ cp "$(ls "$CH"/boot/initrd.img-* | sort -V | tail -1)" "$ISO/casper/initrd"
 chroot "$CH" dpkg-query -W --showformat='${Package} ${Version}\n' > "$ISO/casper/filesystem.manifest"
 du -sx --block-size=1 "$CH" | cut -f1 > "$ISO/casper/filesystem.size"
 mksquashfs "$CH" "$ISO/casper/filesystem.squashfs" -noappend -comp zstd \
+  -Xcompression-level 6 -processors "$(nproc)" \
   -e boot/vmlinuz boot/initrd.img >/dev/null
 # Its fingerprint, so the installer can tell a damaged USB stick and download
 # a good copy (named like this on the Migood server) instead.
