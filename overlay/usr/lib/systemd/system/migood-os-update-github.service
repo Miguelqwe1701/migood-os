@@ -1,0 +1,9 @@
+[Unit]
+Description=Migood OS: download and verify latest release/pre-release from GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/update check-github
+

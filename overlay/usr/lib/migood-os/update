@@ -20,6 +20,7 @@ Only the Python standard library is used, so nothing extra has to be installed.
 import hashlib
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,11 @@ OS_RELEASE = os.environ.get("MIGOOD_OS_RELEASE", "/usr/lib/os-release")
 NO_SNAPSHOT = os.environ.get("MIGOOD_NO_SNAPSHOT") == "1"
 # Readable by everyone: the Migood Updates app shows this to the user.
 STATUS = os.environ.get("MIGOOD_STATUS", "/var/cache/migood-os/status.json")
+DEFAULT_GITHUB_RELEASES = "https://api.github.com/repos/Miguelqwe1701/migood-os/releases"
+GITHUB_NOTICE = (
+    "Fetched from GitHub Releases: gets the latest release/pre-release directly "
+    "from GitHub no matter the channel or rollout (that is how GitHub works)."
+)
 
 
 def log(msg):
@@ -97,13 +103,55 @@ def config():
     return servers, c.get("CHANNEL", "stable")
 
 
+def github_releases_url(force=False):
+    url = (os.environ.get("MIGOOD_GITHUB_RELEASES") or read_kv(CONF).get("GITHUB_RELEASES", "")).strip()
+    if not url and force:
+        return DEFAULT_GITHUB_RELEASES
+    return url
+
+
 def token():
-    """The Migood account token saved at first boot (only root can read it)."""
+    """The Migood account token saved at first boot or in the user's ~/.config/migood/token."""
+    sys_tok = os.path.join(STATE, "token")
     try:
-        with open(os.path.join(STATE, "token")) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        sys.exit("migood-os-update: not signed in yet (no token)")
+        with open(sys_tok) as f:
+            val = f.read().strip()
+            if val:
+                return val
+    except OSError:
+        pass
+
+    # Check the Migood user's ~/.config/migood/token (the same way migood-ai & migood-settings do)
+    candidates = []
+    try:
+        with open(os.path.join(STATE, "account.json")) as f:
+            local_user = json.load(f).get("local")
+        if local_user:
+            candidates.append(os.path.join(pwd.getpwnam(local_user).pw_dir, ".config/migood/token"))
+    except (OSError, ValueError, KeyError):
+        pass
+    if STATE == "/var/lib/migood-os":
+        for p in pwd.getpwall():
+            if p.pw_uid == 1000:
+                candidates.append(os.path.join(p.pw_dir, ".config/migood/token"))
+        candidates.append(os.path.expanduser("~/.config/migood/token"))
+
+    for path in candidates:
+        try:
+            with open(path) as f:
+                val = f.read().strip()
+            if val:
+                try:
+                    os.makedirs(STATE, exist_ok=True)
+                    with open(sys_tok, "w") as out:
+                        out.write(val + "\n")
+                    os.chmod(sys_tok, 0o600)
+                except OSError:
+                    pass
+                return val
+        except OSError:
+            pass
+    sys.exit("migood-os-update: not signed in yet (no token)")
 
 
 def device_id():
@@ -212,16 +260,152 @@ def download(servers, name, dest):
     return part
 
 
-def cmd_check():
-    servers, channel = config()
+def download_url(url, dest):
+    """Download a direct URL (e.g. GitHub Release asset) with resume."""
+    part = dest + ".part"
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    headers = {"User-Agent": "migood-os-update"}
+    if have:
+        headers["Range"] = f"bytes={have}-"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=120)
+    except urllib.error.HTTPError as e:
+        if e.code == 416:
+            return part
+        raise
+    with resp:
+        mode = "ab" if resp.status == 206 else "wb"
+        with open(part, mode) as f:
+            shutil.copyfileobj(resp, f, 1 << 20)
+    return part
+
+
+def check_github(gh_url=None):
+    """Check GitHub Releases directly. Always pulls the latest release/pre-release
+    bundles newer than current_version(), verifying their .sha256 companion file."""
+    gh_url = gh_url or github_releases_url(force=True)
     ver = current_version()
-    q = urllib.parse.urlencode({"from": ver, "channel": channel})
-    with request(servers, f"/api/os/updates?{q}") as resp:
-        releases = releases_from(json.load(resp))
+    log(f"checking GitHub Releases ({gh_url}) — note: this fetches the latest release/pre-release directly from GitHub")
+    req = urllib.request.Request(gh_url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "migood-os-update",
+    })
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        payload = json.load(resp)
+    if isinstance(payload, dict):
+        payload = [payload]
+
+    channel = read_kv(CONF).get("CHANNEL", "stable")
+    candidates = []
+    for gh_rel in payload:
+        if not isinstance(gh_rel, dict) or gh_rel.get("draft"):
+            continue
+        r_ver = (gh_rel.get("tag_name") or "").strip().lstrip("v")
+        if not r_ver or version_key(r_ver) <= version_key(ver):
+            continue
+        assets = {a.get("name"): a.get("browser_download_url")
+                  for a in (gh_rel.get("assets") or [])
+                  if isinstance(a, dict) and a.get("name") and a.get("browser_download_url")}
+        bundle_name = f"migood-os-{r_ver}-update.tar.gz"
+        if bundle_name not in assets:
+            bundle_name = next((n for n in assets if n.endswith("-update.tar.gz")), None)
+        if not bundle_name:
+            continue
+        sha_url = assets.get(bundle_name + ".sha256")
+        if not sha_url:
+            continue
+        candidates.append({
+            "version": r_ver,
+            "prerelease": bool(gh_rel.get("prerelease")),
+            "bundle_name": safe_name(bundle_name),
+            "bundle_url": assets[bundle_name],
+            "sha_url": sha_url,
+        })
+
+    # If channel is stable and non-prereleases exist, prefer them; otherwise GitHub
+    # serves the latest release/pre-release regardless, as noted in GITHUB_NOTICE.
+    if channel == "stable" and any(not c["prerelease"] for c in candidates):
+        candidates = [c for c in candidates if not c["prerelease"]]
+
+    candidates.sort(key=lambda c: version_key(c["version"]))
+    if not candidates:
+        log(f"up to date on GitHub Releases ({ver})")
+        return 0
+
+    base = ver
+    for c in candidates:
+        if version_key(c["version"]) <= version_key(base):
+            continue
+        r_ver = c["version"]
+        name = c["bundle_name"]
+        folder = os.path.join(STATE, "staged", r_ver)
+        os.makedirs(folder, exist_ok=True)
+
+        sha_req = urllib.request.Request(c["sha_url"], headers={"User-Agent": "migood-os-update"})
+        with urllib.request.urlopen(sha_req, timeout=30) as sresp:
+            expected_sha = sresp.read().decode("utf-8", errors="ignore").strip().split()[0].lower()
+        if len(expected_sha) != 64:
+            raise RuntimeError(f"{name}.sha256: invalid checksum from GitHub")
+
+        dest = os.path.join(folder, name)
+        if not (os.path.exists(dest) and sha256_of(dest) == expected_sha):
+            log(f"downloading {r_ver}/{name} from GitHub Releases")
+            part = download_url(c["bundle_url"], dest)
+            got = sha256_of(part)
+            if got != expected_sha:
+                os.remove(part)
+                raise RuntimeError(f"{name}: sha256 mismatch from GitHub (got {got})")
+            os.replace(part, dest)
+
+        kind_label = "Pre-release" if c["prerelease"] else "Release"
+        rel_meta = {
+            "version": r_ver,
+            "channel": channel,
+            "source": "github",
+            "prerelease": c["prerelease"],
+            "notes": f"Migood OS {r_ver} (GitHub {kind_label}). {GITHUB_NOTICE}",
+            "files": [{"name": name, "sha256": expected_sha}],
+            "settings": {},
+        }
+        with open(os.path.join(folder, "release.json"), "w") as out:
+            json.dump(rel_meta, out)
+        log(f"{r_ver} staged from GitHub Releases ({kind_label})")
+        base = r_ver
+    return 0
+
+
+def cmd_check_github():
+    return check_github(github_releases_url(force=True))
+
+
+def cmd_check():
+    gh_fallback = github_releases_url(force=False)
+    try:
+        servers, channel = config()
+        ver = current_version()
+        q = urllib.parse.urlencode({"from": ver, "channel": channel})
+        with request(servers, f"/api/os/updates?{q}") as resp:
+            releases = releases_from(json.load(resp))
+    except BaseException as server_err:
+        if gh_fallback:
+            log(f"Migood server unavailable ({server_err}); falling back to GitHub Releases")
+            try:
+                return check_github(gh_fallback)
+            except Exception as gh_err:
+                log(f"GitHub fallback also failed: {gh_err}")
+        raise
+
     if not releases:
+        if gh_fallback:
+            try:
+                return check_github(gh_fallback)
+            except Exception as gh_err:
+                log(f"GitHub fallback check skipped: {gh_err}")
         log(f"up to date ({ver}, {channel})")
         return 0
     base = ver  # the version this PC will be on once everything staged so far is installed
+    staged_any = False
     for rel in releases:
         if version_key(rel["version"]) <= version_key(base):
             continue
@@ -251,6 +435,12 @@ def cmd_check():
             json.dump(rel, out)
         log(f"{rel['version']} staged, installs at next shutdown")
         base = rel["version"]
+        staged_any = True
+    if not staged_any and gh_fallback:
+        try:
+            check_github(gh_fallback)
+        except Exception as gh_err:
+            log(f"GitHub fallback check skipped: {gh_err}")
     return 0
 
 
@@ -330,7 +520,12 @@ def cmd_checkin():
     return 0
 
 
-COMMANDS = {"check": cmd_check, "apply": cmd_apply, "checkin": cmd_checkin}
+COMMANDS = {
+    "check": cmd_check,
+    "check-github": cmd_check_github,
+    "apply": cmd_apply,
+    "checkin": cmd_checkin,
+}
 
 
 def write_status(result, message=""):
@@ -340,8 +535,11 @@ def write_status(result, message=""):
         try:
             with open(os.path.join(STATE, "staged", v, "release.json")) as f:
                 rel = json.load(f)
-            staged.append({"version": v, "notes": rel.get("notes", ""),
-                           "mandatory": bool((rel.get("settings") or {}).get("mandatory"))})
+            item = {"version": v, "notes": rel.get("notes", ""),
+                    "mandatory": bool((rel.get("settings") or {}).get("mandatory"))}
+            if rel.get("source"):
+                item["source"] = rel["source"]
+            staged.append(item)
         except (OSError, ValueError):
             staged.append({"version": v, "notes": "", "mandatory": False})
     status = {
@@ -364,8 +562,10 @@ def write_status(result, message=""):
 
 
 def main(argv):
+    if len(argv) == 3 and argv[1] == "check" and argv[2] == "--github":
+        argv = [argv[0], "check-github"]
     if len(argv) != 2 or argv[1] not in COMMANDS:
-        print("usage: update check|apply|checkin", file=sys.stderr)
+        print("usage: update check [--github]|check-github|apply|checkin", file=sys.stderr)
         return 2
     cmd = argv[1]
     try:

@@ -276,6 +276,73 @@ class SleepdTest(unittest.TestCase):
         self.assertEqual(Server.bodies[-1], {"token": TICKET, "up": True})
         self.assertFalse(self.d.handle({"cmd": "status"}, 1000)["sleeping"])
 
+    def test_sleep_exchanges_login_token_with_id_and_name(self):
+        Server.answer = {"token": TICKET, "every": 10}
+        res = self.d.handle({
+            "cmd": "sleep",
+            "auth_token": "login-bearer-token-12345",
+            "id": "dev-abc12345",
+            "name": "My-Migood-PC",
+            "every": 5,
+        }, 1000)
+        self.assertTrue(res["ok"])
+        self.assertEqual(Server.bodies[-1]["id"], "dev-abc12345")
+        self.assertEqual(Server.bodies[-1]["name"], "My-Migood-PC")
+        self.assertEqual(Server.bodies[-1]["kind"], "os")
+        self.assertEqual(self.d.state["token"], TICKET)
+        self.assertEqual(self.d.state["every"], 10)
+        self.d.handle({"cmd": "cancel"}, 1000)
+
+    def test_patch_migood_games_app(self):
+        import struct
+        w_orig = (
+            'async function getTicket(every, name, kind) {\n'
+            '  const win = pageWindows().find((w) => w && !w.isDestroyed() && (w.webContents.getURL() || "").startsWith(SITE));\n'
+            '  if (!win) return { error: "Open Migood Games first (it needs to be signed in)." };\n'
+            '  const js = `(async () => {\n'
+            '    let id = localStorage.getItem("mg_rp_device");\n'
+            '    if (!id) { id = "dev-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("mg_rp_device", id); }\n'
+            '    const r = await fetch("/api/remote/sleep", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },\n'
+            '      body: JSON.stringify({ id, name: ${JSON.stringify(String(name).slice(0, 40))}, every: ${every | 0}, kind: ${JSON.stringify(kind === "os" ? "os" : "pc")} }) });\n'
+            '    const d = await r.json().catch(() => ({}));\n'
+            '    return r.ok && d.token ? { token: String(d.token), every: d.every | 0 } : { error: d.error || ("Migood said " + r.status) };\n'
+            '  })()`;\n'
+            '  try { return await win.webContents.executeJavaScript(js, true); } catch (e) { return { error: "Couldn\'t reach Migood." }; }\n'
+            '}\n'
+        ).encode("utf-8")
+        wm_orig = (
+            'async function sleepNow(opts, getTicket, name) {\r\n'
+            '  const i = await info();\r\n'
+            '  if (!i.supported) {\r\n'
+            '    return { error: i.why === "migood-os-only" ? "Sleep & wake from anywhere comes with Migood OS." : "Migood OS\'s sleep service isn\'t answering: " + (i.error || "unknown") };\r\n'
+            '  }\r\n'
+            '  const every = Math.max(2, Math.min(30, (opts && opts.every | 0) || 5));\r\n'
+            '  const t = await getTicket(every, name, "os");\r\n'
+            '  if (!t || !t.token) return { error: (t && t.error) || "Couldn\'t get ready to sleep." };\r\n'
+            '  const r = await ask({ cmd: "sleep", token: t.token, every: t.every || every });\r\n'
+            '  return r && r.ok ? { ok: true } : { error: (r && r.error) || "Migood OS didn\'t go to sleep." };\r\n'
+            '}\r\n'
+        ).encode("utf-8")
+        hdr = {
+            "files": {
+                "wake.js": {"offset": "0", "size": len(w_orig)},
+                "wake_migoodos.js": {"offset": str(len(w_orig)), "size": len(wm_orig)},
+            }
+        }
+        hdr_bytes = json.dumps(hdr, separators=(",", ":")).encode("utf-8")
+        pad = (4 - (len(hdr_bytes) % 4)) % 4
+        padded = hdr_bytes + (b"\x00" * pad)
+        asar_path = os.path.join(TMP.name, "test-app.asar")
+        with open(asar_path, "wb") as f:
+            f.write(struct.pack("<IIII", 4, len(padded) + 8, len(padded) + 4, len(hdr_bytes)) + padded + w_orig + wm_orig)
+
+        self.assertTrue(sleepd.patch_migood_games_app(asar_path))
+        self.assertFalse(sleepd.patch_migood_games_app(asar_path))  # idempotent
+        with open(asar_path, "rb") as f:
+            raw = f.read()
+        self.assertIn(b"MIGOOD_SLEEP_AUTH_PATCH_V2", raw)
+        self.assertIn(b'hdrs["Authorization"] = "Bearer " + tok', raw)
+
 
 class SocketTest(unittest.TestCase):
     """The real socket protocol: one JSON object per line."""
