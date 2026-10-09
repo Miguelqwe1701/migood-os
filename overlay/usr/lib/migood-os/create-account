@@ -118,7 +118,7 @@ def create():
     # The account is the computer's admin (installs apps, changes settings),
     # except for 12-and-under ("junior") Migood accounts: those get a normal
     # account, like the site's protections (feature 7).
-    groups = "lpadmin" if junior else "sudo,adm,lpadmin"
+    groups = "lpadmin,input,video,render,plugdev,audio" if junior else "sudo,adm,lpadmin,input,video,render,plugdev,audio"
     subprocess.run(["useradd", "-m", "-s", "/bin/bash", "-c", shown,
                     "-G", groups, name], check=True)
     subprocess.run(["chpasswd"], input=f"{name}:{pin or password}", text=True, check=True)

@@ -24,6 +24,20 @@ picture-options='zoom'
 
 [org/gnome/desktop/screensaver]
 picture-uri='file:///usr/share/backgrounds/migood/default.png'
+lock-enabled=false
+idle-activation-enabled=false
+ubuntu-lock-on-suspend=false
+
+[org/gnome/desktop/lockdown]
+disable-lock-screen=true
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+idle-dim=false
 
 [org/gnome/desktop/wm/preferences]
 button-layout='appmenu:minimize,maximize,close'

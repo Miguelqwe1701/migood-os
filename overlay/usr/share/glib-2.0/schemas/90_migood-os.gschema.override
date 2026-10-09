@@ -4,3 +4,20 @@
 # Login screen: Migood logo at the bottom instead of the Ubuntu logo.
 [org.gnome.login-screen]
 logo='/usr/share/migood-os/migood-logo.png'
+
+# Never lock the screen or suspend behind Migood Remote Play's back.
+[org.gnome.desktop.screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+ubuntu-lock-on-suspend=false
+
+[org.gnome.desktop.lockdown]
+disable-lock-screen=true
+
+[org.gnome.desktop.session]
+idle-delay=0
+
+[org.gnome.settings-daemon.plugins.power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+idle-dim=false

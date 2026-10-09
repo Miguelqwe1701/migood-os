@@ -323,10 +323,32 @@ class SleepdTest(unittest.TestCase):
             '  return r && r.ok ? { ok: true } : { error: (r && r.error) || "Migood OS didn\'t go to sleep." };\r\n'
             '}\r\n'
         ).encode("utf-8")
+        m_orig = (
+            'if (process.platform === "linux") app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");\n'
+        ).encode("utf-8")
+        pc_orig = (
+            'const TEST_AUTOCONFIRM = process.env.MIGOOD_TEST_AUTOCONFIRM === "1";\n'
+            'function ask(win, opts) {\n'
+            '  if (TEST_AUTOCONFIRM) return Promise.resolve({ response: 0 });\n'
+            '  return win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);\n'
+            '}\n'
+        ).encode("utf-8")
+        pi_orig = (
+            'function hasXdotool() {\n'
+            '  try { execFileSync("xdotool", ["version"], { stdio: "ignore", timeout: 3000 }); return true; } catch (e) { return false; }\n'
+            '}\n'
+        ).encode("utf-8")
+        off1 = len(w_orig)
+        off2 = off1 + len(wm_orig)
+        off3 = off2 + len(m_orig)
+        off4 = off3 + len(pc_orig)
         hdr = {
             "files": {
                 "wake.js": {"offset": "0", "size": len(w_orig)},
-                "wake_migoodos.js": {"offset": str(len(w_orig)), "size": len(wm_orig)},
+                "wake_migoodos.js": {"offset": str(off1), "size": len(wm_orig)},
+                "main.js": {"offset": str(off2), "size": len(m_orig)},
+                "pchost.js": {"offset": str(off3), "size": len(pc_orig)},
+                "pcinput_linux.js": {"offset": str(off4), "size": len(pi_orig)},
             }
         }
         hdr_bytes = json.dumps(hdr, separators=(",", ":")).encode("utf-8")
@@ -334,14 +356,17 @@ class SleepdTest(unittest.TestCase):
         padded = hdr_bytes + (b"\x00" * pad)
         asar_path = os.path.join(TMP.name, "test-app.asar")
         with open(asar_path, "wb") as f:
-            f.write(struct.pack("<IIII", 4, len(padded) + 8, len(padded) + 4, len(hdr_bytes)) + padded + w_orig + wm_orig)
+            f.write(struct.pack("<IIII", 4, len(padded) + 8, len(padded) + 4, len(hdr_bytes)) + padded + w_orig + wm_orig + m_orig + pc_orig + pi_orig)
 
         self.assertTrue(sleepd.patch_migood_games_app(asar_path))
         self.assertFalse(sleepd.patch_migood_games_app(asar_path))  # idempotent
         with open(asar_path, "rb") as f:
             raw = f.read()
         self.assertIn(b"MIGOOD_SLEEP_AUTH_PATCH_V2", raw)
+        self.assertIn(b"MIGOOD_SILENT_CAPTURE_V2", raw)
+        self.assertIn(b"MIGOOD_INPUT_PATCH_V1", raw)
         self.assertIn(b'hdrs["Authorization"] = "Bearer " + tok', raw)
+        self.assertEqual(self.d.handle({"cmd": "unlock"}, 1000), {"ok": True})
 
     def test_deferred_ticket_registration_when_offline_at_sleep_start(self):
         # Simulate temporary offline server when cmd_sleep is called, then online at wake_check
