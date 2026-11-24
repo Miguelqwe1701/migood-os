@@ -125,6 +125,10 @@ try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shi
   ubuntu-drivers-common pciutils
 # Quiet fans: the "Power Mode" service the fan controller (migood-fan) talks to.
 try_install power-profiles-daemon
+# Graphics: the HWE kernel (newer AMD/Intel GPU support; the live USB boots it
+# too, the build picks the newest kernel), firmware, CPU microcode, GPU tools.
+try_install linux-generic-hwe-24.04 linux-firmware amd64-microcode intel-microcode \
+  pciutils mesa-vulkan-drivers mesa-utils ubuntu-drivers-common
 if [ -f /etc/default/zramswap ]; then
   sed -i 's/^#\?ALGO=.*/ALGO=zstd/; s/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap
 fi
@@ -175,7 +179,7 @@ say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
   /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
-  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers
+  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers /usr/lib/migood-os/migood-gpu-check
 [ -f /etc/sudoers.d/migood-os ] && chmod 440 /etc/sudoers.d/migood-os
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
@@ -196,7 +200,7 @@ rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
-  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service
+  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service migood-gpu-check.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 # Overlay schema overrides (e.g. the login screen's Migood logo) take effect
 # only once compiled.

@@ -31,6 +31,18 @@ if [ "$online" != "true" ]; then
   exit 0
 fi
 
+export DEBIAN_FRONTEND=noninteractive
+
+# Newer graphics support: Ubuntu 24.04's first kernel (6.8) is too old for many
+# recent AMD/Intel laptop GPUs (frozen boot screen). The HWE kernel follows newer
+# Ubuntu releases and is supported by Canonical; firmware updates come with it.
+if ! dpkg-query -W -f='${Status}' linux-generic-hwe-24.04 2>/dev/null | grep -q "install ok installed"; then
+  echo "Installing the newer (HWE) kernel and graphics firmware..." >> "$LOG"
+  apt-get update -q >> "$LOG" 2>&1 || true
+  apt-get install -y linux-generic-hwe-24.04 linux-firmware amd64-microcode intel-microcode >> "$LOG" 2>&1 \
+    || echo "HWE kernel install failed (will retry next check)" >> "$LOG"
+fi
+
 # Detect NVIDIA GPU
 has_nvidia=false
 if command -v lspci >/dev/null 2>&1 && lspci -d 10de: >/dev/null 2>&1; then
@@ -53,6 +65,9 @@ if [ "$has_nvidia" = "true" ]; then
     # If nvidia-driver was successfully installed:
     if dpkg -l "nvidia-driver*" 2>/dev/null | grep -q "^ii"; then
       echo "NVIDIA driver installed successfully! Updating boot configuration..." >> "$LOG"
+      # Hybrid laptops: the iGPU drives the screen, the dGPU runs games on
+      # demand. Works whether the dGPU is on or switched off (ASUS Eco mode).
+      command -v prime-select >/dev/null && prime-select on-demand >> "$LOG" 2>&1 || true
       # Remove fallback nouveau.modeset=0 / nomodeset now that official driver is active
       if [ -f /etc/default/grub ]; then
         sed -i 's/nouveau.modeset=0//g; s/nomodeset//g' /etc/default/grub

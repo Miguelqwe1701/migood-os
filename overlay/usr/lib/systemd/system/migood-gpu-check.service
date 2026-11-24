@@ -1,0 +1,13 @@
+[Unit]
+Description=Migood OS: match the graphics setup to the GPUs that are switched on
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs.target
+Before=display-manager.service gdm.service gpu-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/migood-gpu-check
+TimeoutStartSec=20
+
+[Install]
+WantedBy=multi-user.target
