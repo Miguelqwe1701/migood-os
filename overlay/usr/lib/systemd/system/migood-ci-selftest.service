@@ -1,0 +1,13 @@
+[Unit]
+Description=Migood OS boot self-test (only in GitHub Actions' VM: migood.ci=1)
+ConditionKernelCommandLine=migood.ci=1
+After=graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/migood-ci-selftest
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=graphical.target

@@ -183,7 +183,8 @@ cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
   /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
   /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers /usr/lib/migood-os/migood-gpu-check \
-  /usr/lib/migood-os/migood-home /usr/lib/migood-os/migood-home-session /usr/lib/migood-os/migood-switch
+  /usr/lib/migood-os/migood-home /usr/lib/migood-os/migood-home-session /usr/lib/migood-os/migood-switch \
+  /usr/lib/migood-os/migood-ci-selftest
 # The live USB's user ("migood", made by casper at boot) starts in Migood Home.
 install -d /var/lib/AccountsService/users
 printf '[User]\nSession=migood-home\nXSession=migood-home\nSystemAccount=false\n' \
@@ -208,7 +209,8 @@ rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
-  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service migood-gpu-check.service
+  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service migood-gpu-check.service \
+  migood-ci-selftest.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 # Overlay schema overrides (e.g. the login screen's Migood logo) take effect
 # only once compiled.
