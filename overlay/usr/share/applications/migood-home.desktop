@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Back to Migood Home
+Comment=Leave the desktop and go back to the Migood Home screen
+Exec=/usr/lib/migood-os/migood-switch home
+Icon=/usr/share/migood-os/migood-button.png
+Type=Application
+Categories=System;
+OnlyShowIn=GNOME;Unity;ubuntu:GNOME;

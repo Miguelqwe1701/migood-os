@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Migood Home
+Comment=Migood OS: games, friends and apps on one full-screen home
+Exec=/usr/lib/migood-os/migood-home-session
+Type=Application
+DesktopNames=Migood

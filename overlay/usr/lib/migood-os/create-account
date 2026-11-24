@@ -62,8 +62,30 @@ def set_picture(name, png):
     with open(icon, "wb") as f:
         f.write(png)
     os.chmod(icon, 0o644)
-    with open(os.path.join(icons, "users", name), "w") as f:
-        f.write(f"[User]\nIcon={icon}\nSystemAccount=false\n")
+    set_user_keys(name, Icon=icon, SystemAccount="false")
+
+
+def set_user_keys(name, **keys):
+    """Add/replace keys in AccountsService's file for this user (keeps the rest)."""
+    import configparser
+    users = os.path.join(os.environ.get("MIGOOD_AS_DIR", "/var/lib/AccountsService"), "users")
+    os.makedirs(users, exist_ok=True)
+    path = os.path.join(users, name)
+    cp = configparser.RawConfigParser()
+    cp.optionxform = str
+    cp.read(path)
+    if not cp.has_section("User"):
+        cp.add_section("User")
+    for k, v in keys.items():
+        cp.set("User", k, v)
+    with open(path, "w") as f:
+        cp.write(f, space_around_delimiters=False)
+
+
+def start_in_home(name):
+    """New accounts start in Migood Home (the desktop is one button away)."""
+    if os.path.exists("/usr/share/xsessions/migood-home.desktop") or os.environ.get("MIGOOD_AS_DIR"):
+        set_user_keys(name, Session="migood-home", XSession="migood-home")
 
 
 def write_private(path, text, uid=0, gid=0):
@@ -131,6 +153,7 @@ def create():
     with open(os.path.join(STATE, "account.json"), "w") as f:
         json.dump({"local": name, "migood": migood, "junior": junior}, f)
     set_picture(name, pfp)
+    start_in_home(name)
     print(name)
 
 

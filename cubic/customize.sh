@@ -127,6 +127,9 @@ try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shi
 try_install power-profiles-daemon
 # Graphics: the HWE kernel (newer AMD/Intel GPU support; the live USB boots it
 # too, the build picks the newest kernel), firmware, CPU microcode, GPU tools.
+# Migood Home (the full-screen home screen session): WebKitGTK for the screen,
+# a kiosk window manager, and a password prompt for admin apps outside GNOME.
+try_install gir1.2-webkit-6.0 matchbox-window-manager mate-polkit x11-xserver-utils gnome-keyring
 try_install linux-generic-hwe-24.04 linux-firmware amd64-microcode intel-microcode \
   pciutils mesa-vulkan-drivers mesa-utils ubuntu-drivers-common
 if [ -f /etc/default/zramswap ]; then
@@ -179,7 +182,12 @@ say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
   /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
-  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers /usr/lib/migood-os/migood-gpu-check
+  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers /usr/lib/migood-os/migood-gpu-check \
+  /usr/lib/migood-os/migood-home /usr/lib/migood-os/migood-home-session /usr/lib/migood-os/migood-switch
+# The live USB's user ("migood", made by casper at boot) starts in Migood Home.
+install -d /var/lib/AccountsService/users
+printf '[User]\nSession=migood-home\nXSession=migood-home\nSystemAccount=false\n' \
+  > /var/lib/AccountsService/users/migood
 [ -f /etc/sudoers.d/migood-os ] && chmod 440 /etc/sudoers.d/migood-os
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os

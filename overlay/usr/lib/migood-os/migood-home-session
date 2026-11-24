@@ -1,0 +1,35 @@
+#!/bin/bash
+# The "Migood Home" login session (X11, so Remote Play can see and drive it):
+# a kiosk window manager that shows every app full-screen, plus Migood Home.
+#
+# Safety net: if Migood Home can't start or keeps crashing, this user's next
+# login goes to the normal desktop instead, so nobody gets stuck on a black screen.
+export XDG_CURRENT_DESKTOP=Migood XDG_SESSION_DESKTOP=migood-home
+LIB=/usr/lib/migood-os
+
+to_desktop() {
+  python3 -c "import sys; sys.path.insert(0, '$LIB'); import homecore; homecore.set_session('ubuntu')"
+  exec env GNOME_SHELL_SESSION_MODE=ubuntu gnome-session --session=ubuntu  # a desktop this time
+}
+
+# Needs WebKitGTK 6 for the home screen; without it, use the desktop.
+python3 -c "import gi; gi.require_version('WebKit', '6.0')" 2>/dev/null || to_desktop
+
+# Password prompts for apps that need admin rights (Updates, Settings, installer).
+for agent in /usr/lib/x86_64-linux-gnu/polkit-mate/polkit-mate-authentication-agent-1 \
+             /usr/libexec/polkit-gnome-authentication-agent-1; do
+  [ -x "$agent" ] && { "$agent" & break; }
+done
+# Keyring (saved Wi-Fi/app passwords) and user settings daemon, best-effort.
+command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" && export SSH_AUTH_SOCK
+xsetroot -solid '#07090d' 2>/dev/null
+matchbox-window-manager -use_titlebar no -use_cursor yes &
+
+fails=0
+while true; do
+  started=$(date +%s)
+  "$LIB/migood-home" && exit 0          # left on purpose (Desktop mode logs out)
+  if [ $(( $(date +%s) - started )) -lt 30 ]; then fails=$((fails + 1)); else fails=0; fi
+  [ "$fails" -ge 3 ] && to_desktop      # crashed 3 times in a row, quickly
+  sleep 1
+done

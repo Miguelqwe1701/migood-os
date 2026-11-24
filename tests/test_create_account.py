@@ -46,6 +46,15 @@ class CreateAccountTest(unittest.TestCase):
         self.ca.set_picture("evil", b"<html>not a png")  # ignored
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "icons", "evil")))
 
+    def test_new_accounts_start_in_migood_home_and_keep_picture(self):
+        os.environ["MIGOOD_AS_DIR"] = self.tmp
+        self.ca.set_picture("kid", b"\x89PNG\r\n\x1a\n" + b"0" * 10)
+        self.ca.start_in_home("kid")
+        with open(os.path.join(self.tmp, "users", "kid")) as f:
+            text = f.read()
+        self.assertIn("XSession=migood-home", text)
+        self.assertIn("Icon=", text)  # the picture line survives
+
     def test_autologin_on_then_off_keeps_other_settings(self):
         conf = os.environ["MIGOOD_GDM_CONF"]
         with open(conf, "w") as f:
