@@ -132,6 +132,16 @@ try_install power-profiles-daemon
 try_install gir1.2-webkit-6.0 matchbox-window-manager mate-polkit x11-xserver-utils gnome-keyring
 try_install linux-generic-hwe-24.04 linux-firmware amd64-microcode intel-microcode \
   pciutils mesa-vulkan-drivers mesa-utils ubuntu-drivers-common
+# With the HWE kernel in, the older 24.04 kernel is just ~400 MB of dead
+# weight (the live USB and installs boot the newest one), so remove it.
+if dpkg -s linux-generic-hwe-24.04 >/dev/null 2>&1; then
+  newest="$(ls /boot/vmlinuz-* | sort -V | tail -1 | sed 's#.*/vmlinuz-##; s#-generic$##')"
+  old_kernels="$(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 'linux-modules-[0-9]*' \
+    'linux-modules-extra-[0-9]*' 'linux-headers-[0-9]*' 2>/dev/null | grep -v -- "$newest" || true)"
+  # shellcheck disable=SC2086  # one word per package
+  apt-get purge -y linux-generic linux-image-generic linux-headers-generic $old_kernels \
+    || warn "old kernel not removed"
+fi
 if [ -f /etc/default/zramswap ]; then
   sed -i 's/^#\?ALGO=.*/ALGO=zstd/; s/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap
 fi

@@ -104,6 +104,7 @@ menu-item-hover-fg-color='rgb(242,245,247)'
 menu-item-active-bg-color='rgb(46,204,113)'
 menu-item-active-fg-color='rgb(6,32,18)'
 menu-separator-color='rgba(255,255,255,0.08)'
+pinned-apps=[{'id': 'migood-games.desktop'}, {'id': 'org.chromium.Chromium.desktop'}, {'id': 'steam.desktop'}, {'id': 'migood-ai.desktop'}, {'id': 'org.gnome.Nautilus.desktop'}, {'id': 'migood-updates.desktop'}, {'id': 'migood-settings.desktop'}, {'id': 'org.gnome.Settings.desktop'}, {'id': 'migood-home.desktop'}]
 
 # Desktop icons (only switched on in the live USB session, for the
 # "Install Migood OS" icon; see welcome-autostart). No Home/Trash/drives.
