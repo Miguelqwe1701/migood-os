@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a new Migood Games app (3 min after start-up, then every 6 h)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

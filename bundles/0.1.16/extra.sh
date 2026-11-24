@@ -38,3 +38,9 @@ ca.start_in_home(sys.argv[1])
 PY
   done
 fi
+
+# 5. Migood Games updates itself through the OS now (the app's own updater only
+#    works on Windows): turn on the updater; it checks 3 min after start-up.
+chmod 755 /usr/lib/migood-os/migood-app-update 2>/dev/null || true
+systemctl enable migood-app-update.timer migood-app-update-apply.service 2>/dev/null || true
+/usr/lib/migood-os/migood-app-update --refresh || true

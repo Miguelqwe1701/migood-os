@@ -1,0 +1,14 @@
+[Unit]
+Description=Migood OS: install a Migood Games update downloaded while the app was open
+DefaultDependencies=no
+After=local-fs.target
+Before=display-manager.service gdm.service
+ConditionPathExists=/var/lib/migood-os/app-staged/app.tar.gz
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/migood-app-update --apply-staged
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

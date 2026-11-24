@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Keeps the Migood Games app up to date on Migood OS (runs as root).
+
+The app's Linux build (a tar.gz) can't update itself: electron-updater only
+updates the Windows app. So the OS does it, the same way for every PC:
+
+  migood-app-update                  check the Migood server (linux.json); if
+                                     there's a newer app, download it, check
+                                     its size + sha256, and install it now, or
+                                     at the next start-up if the app is open
+  migood-app-update --apply-staged   install a download waiting from last time
+                                     (at start-up, before anyone logs in)
+  migood-app-update --install-tarball FILE [--version V]
+                                     install from a file (the ISO build uses this)
+  migood-app-update --refresh        rewrite the launcher, autostart, link
+                                     handler and AppArmor profile for the app
+                                     that's already installed
+
+Installing = unpack next to the old app, swap folders, then the setup the app
+needs on Ubuntu 24.04: chrome-sandbox owned by root with the setuid bit, an
+AppArmor profile that allows its sandbox, the launcher (with migood:// links)
+and autostart in the tray (--hidden). A failed install leaves the old app.
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import migoodlib
+except ImportError:  # the ISO build runs this before migoodlib is needed
+    migoodlib = None
+
+ROOT = os.environ.get("MIGOOD_ROOT", "/")
+STATE = os.environ.get("MIGOOD_STATE", "/var/lib/migood-os")
+
+
+def p(path):
+    """A system path, under MIGOOD_ROOT (the tests use a pretend root)."""
+    return os.path.join(ROOT, path.lstrip("/"))
+
+
+APP = "/opt/migood-games"
+BIN = APP + "/migood-games"
+VERSION_FILE = "/usr/share/migood-os/migood-games.version"
+STAGED = os.path.join(STATE, "app-staged")
+
+
+def log(msg):
+    print(f"migood-app-update: {msg}", flush=True)
+
+
+def version_key(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in str(v).replace("-", ".").split("."))
+
+
+def installed_version():
+    try:
+        with open(p(VERSION_FILE)) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def app_running():
+    if "MIGOOD_APP_RUNNING" in os.environ:  # tests
+        return os.environ["MIGOOD_APP_RUNNING"] == "1"
+    return subprocess.run(["pgrep", "-f", BIN], capture_output=True).returncode == 0
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+# ---------- install ----------
+
+def safe_members(tar):
+    """Strip the top folder (Migood-Games-3.14.1-x64/...) and refuse anything
+    that would land outside the app folder or link out of it."""
+    for m in tar.getmembers():
+        parts = m.name.split("/", 1)
+        if len(parts) < 2 or not parts[1]:
+            continue
+        m.name = parts[1]
+        if m.name.startswith("/") or ".." in m.name.split("/"):
+            raise ValueError(f"unsafe path in the app archive: {m.name}")
+        if (m.issym() or m.islnk()) and (m.linkname.startswith("/") or ".." in m.linkname.split("/")):
+            raise ValueError(f"unsafe link in the app archive: {m.name}")
+        if m.isdev():
+            continue
+        yield m
+
+
+def install_tarball(path, version):
+    app, new, old = p(APP), p(APP) + ".new", p(APP) + ".old"
+    shutil.rmtree(new, ignore_errors=True)
+    os.makedirs(new)
+    try:
+        with tarfile.open(path) as tar:
+            tar.extractall(new, members=list(safe_members(tar)), filter="tar")
+        if not os.access(os.path.join(new, "migood-games"), os.X_OK):
+            raise ValueError("the archive has no migood-games program")
+    except Exception:
+        shutil.rmtree(new, ignore_errors=True)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(app):
+        os.rename(app, old)
+    os.rename(new, app)
+    shutil.rmtree(old, ignore_errors=True)
+    os.makedirs(os.path.dirname(p(VERSION_FILE)), exist_ok=True)
+    with open(p(VERSION_FILE), "w") as f:
+        f.write(version + "\n")
+    refresh()
+    log(f"Migood Games {version} installed")
+
+
+DESKTOP = """[Desktop Entry]
+Name=Migood Games
+Comment=Play, chat and Remote Play with your friends
+Exec={bin} %U
+Icon=/usr/share/migood-os/migood-launcher.png
+Type=Application
+Categories=Game;
+MimeType=x-scheme-handler/migood;
+StartupWMClass=Migood Games
+"""
+
+APPARMOR = """# Lets Migood Games use its sandbox on Ubuntu 24.04 (migood-app-update).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile migood-games {bin} flags=(unconfined) {{
+  userns,
+
+  include if exists <local/migood-games>
+}}
+"""
+
+
+def write(path, text, mode=0o644):
+    os.makedirs(os.path.dirname(p(path)), exist_ok=True)
+    with open(p(path), "w") as f:
+        f.write(text)
+    os.chmod(p(path), mode)
+
+
+def refresh():
+    """The setup the installed app needs on Migood OS."""
+    if not os.path.exists(p(BIN)):
+        return False
+    sandbox = p(APP + "/chrome-sandbox")
+    if os.path.exists(sandbox):
+        if os.geteuid() == 0:
+            os.chown(sandbox, 0, 0)
+        os.chmod(sandbox, 0o4755)
+    write("/usr/share/applications/migood-games.desktop", DESKTOP.format(bin=BIN))
+    # Starts with the session in the tray (--hidden), so notifications and
+    # Remote Play hosting work without the window popping up at every login.
+    write("/etc/xdg/autostart/migood-games.desktop",
+          DESKTOP.format(bin=BIN).replace(" %U", " --hidden") + "X-GNOME-Autostart-enabled=true\n")
+    write("/etc/apparmor.d/migood-games", APPARMOR.format(bin=BIN))
+    if ROOT == "/":
+        # On a running PC load the profile now; in the ISO build just check it.
+        live = os.path.exists("/sys/kernel/security/apparmor/profiles")
+        subprocess.run(["apparmor_parser", "-r" if live else "-QK", "/etc/apparmor.d/migood-games"],
+                       capture_output=True)
+        subprocess.run(["update-desktop-database", "-q", "/usr/share/applications"], capture_output=True)
+    return True
+
+
+# ---------- updates ----------
+
+def servers():
+    if os.environ.get("MIGOOD_APP_SERVERS"):
+        return os.environ["MIGOOD_APP_SERVERS"].split()
+    if migoodlib:
+        return migoodlib.servers()
+    return ["https://www.welltypers.it.com"]
+
+
+def newest():
+    """(server, linux.json) from the first server that answers."""
+    for s in servers():
+        try:
+            req = urllib.request.Request(s.rstrip("/") + "/downloads/desktop/linux.json",
+                                         headers={"User-Agent": "migood-os"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                info = json.load(r)
+            if all(k in info for k in ("version", "url", "size", "sha256")):
+                return s.rstrip("/"), info
+        except (OSError, ValueError):
+            continue
+    return None, None
+
+
+def download(server, info, dest):
+    part = dest + ".part"
+    req = urllib.request.Request(server + info["url"], headers={"User-Agent": "migood-os"})
+    with urllib.request.urlopen(req, timeout=120) as r, open(part, "wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    if os.path.getsize(part) != int(info["size"]) or sha256_of(part) != info["sha256"]:
+        os.remove(part)
+        raise ValueError("the download doesn't match linux.json (size or sha256); not installing it")
+    os.replace(part, dest)
+
+
+def check():
+    server, info = newest()
+    if not info:
+        log("no Migood server answered; trying again later")
+        return 0
+    have = installed_version()
+    if have and version_key(info["version"]) <= version_key(have):
+        log(f"Migood Games {have} is up to date")
+        return 0
+    os.makedirs(STAGED, exist_ok=True)
+    tgz = os.path.join(STAGED, "app.tar.gz")
+    log(f"downloading Migood Games {info['version']} (have {have or 'none'})")
+    download(server, info, tgz)
+    with open(os.path.join(STAGED, "version"), "w") as f:
+        f.write(info["version"])
+    if app_running():
+        log("Migood Games is open: the update installs at the next start-up")
+        return 0
+    return apply_staged()
+
+
+def apply_staged():
+    tgz, ver = os.path.join(STAGED, "app.tar.gz"), os.path.join(STAGED, "version")
+    if not (os.path.exists(tgz) and os.path.exists(ver)):
+        return 0
+    with open(ver) as f:
+        version = f.read().strip()
+    install_tarball(tgz, version)
+    shutil.rmtree(STAGED, ignore_errors=True)
+    return 0
+
+
+def main(argv):
+    if "--install-tarball" in argv:
+        path = argv[argv.index("--install-tarball") + 1]
+        version = argv[argv.index("--version") + 1] if "--version" in argv else \
+            os.path.basename(path).replace(".tar.gz", "").replace("migood-games-", "")
+        install_tarball(path, version)
+        return 0
+    if "--refresh" in argv:
+        return 0 if refresh() else 1
+    if "--apply-staged" in argv:
+        return apply_staged()
+    return check()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exception as e:  # never leave a half-done app behind with a traceback only
+        log(f"failed: {e}")
+        sys.exit(1)

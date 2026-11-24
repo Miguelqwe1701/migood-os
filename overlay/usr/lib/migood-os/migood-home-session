@@ -24,6 +24,9 @@ done
 command -v gnome-keyring-daemon >/dev/null && eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" && export SSH_AUTH_SOCK
 xsetroot -solid '#07090d' 2>/dev/null
 matchbox-window-manager -use_titlebar no -use_cursor yes &
+# Migood Games in the background (tray mode), like on the desktop: Remote Play
+# hosting, Sleep & wake and notifications need it running.
+[ -x /opt/migood-games/migood-games ] && /opt/migood-games/migood-games --hidden &
 
 fails=0
 while true; do
