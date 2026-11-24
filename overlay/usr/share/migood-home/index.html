@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migood Home</title>
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+<header class="bar">
+  <img class="logo" src="logo.png" alt="">
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="home" data-nav>Home</button>
+    <button class="tab" data-tab="games" data-nav>Games</button>
+    <button class="tab" data-tab="apps" data-nav>Apps</button>
+    <button class="tab" data-tab="settings" data-nav>Settings</button>
+  </nav>
+  <div class="status">
+    <span id="net" class="pill" title="Internet"></span>
+    <span id="vol" class="pill" title="Volume"></span>
+    <span id="bat" class="pill" title="Battery"></span>
+    <span id="clock" class="clock"></span>
+    <button id="me" class="me" data-nav title="Power"><img id="avatar" alt=""><span id="myname"></span></button>
+  </div>
+</header>
+
+<main>
+  <section id="home" class="page active">
+    <div class="hero" id="hero" data-nav tabindex="0">
+      <div class="hero-art" id="hero-art"></div>
+      <div class="hero-text">
+        <div class="eyebrow" id="hero-eyebrow">Jump back in</div>
+        <h1 id="hero-title">Migood Games</h1>
+        <p id="hero-sub">Play, chat and Remote Play with your friends.</p>
+        <span class="cta">▶ Play</span>
+      </div>
+    </div>
+    <h2>Quick actions</h2>
+    <div class="row" id="quick"></div>
+    <h2>Recently played</h2>
+    <div class="row" id="recent"><p class="empty">Games and apps you open show up here.</p></div>
+    <h2>Your games</h2>
+    <div class="row" id="home-games"></div>
+  </section>
+
+  <section id="games" class="page"><h2>Games</h2><div class="grid" id="games-grid"></div></section>
+  <section id="apps" class="page"><h2>Apps</h2><div class="grid" id="apps-grid"></div></section>
+
+  <section id="settings" class="page">
+    <h2>Wi-Fi</h2>
+    <div class="list" id="wifi-list"><p class="empty">Looking for networks…</p></div>
+    <h2>Sound</h2>
+    <div class="card slider-card">
+      <span>Volume</span>
+      <input type="range" id="volume" min="0" max="100" step="5" data-nav>
+      <span id="volume-num"></span>
+    </div>
+    <h2>System</h2>
+    <div class="row">
+      <button class="tile small" data-nav data-action="settings">⚙<span>Migood OS Settings</span></button>
+      <button class="tile small" data-nav data-action="updates">⬇<span>Updates</span></button>
+      <button class="tile small" data-nav data-action="desktop">🖥<span>Desktop mode</span></button>
+      <button class="tile small" data-nav data-action="power">⏻<span>Power</span></button>
+    </div>
+  </section>
+</main>
+
+<footer class="hints">
+  <span><b>A</b> Open</span><span><b>B</b> Back</span><span><b>LB/RB</b> Switch tab</span><span><b>☰</b> Power</span>
+</footer>
+
+<div class="overlay" id="power" hidden>
+  <div class="sheet">
+    <h2>Power</h2>
+    <button class="tile wide" data-nav data-power="sleep">☾<span>Sleep</span></button>
+    <button class="tile wide" data-nav data-power="restart">↻<span>Restart</span></button>
+    <button class="tile wide" data-nav data-power="shutdown">⏻<span>Shut down</span></button>
+    <button class="tile wide" data-nav data-action="desktop">🖥<span>Switch to Desktop mode</span></button>
+  </div>
+</div>
+
+<div class="overlay" id="ask" hidden>
+  <div class="sheet">
+    <h2 id="ask-title">Password</h2>
+    <input id="ask-input" type="password" data-nav autocomplete="off">
+    <div class="row">
+      <button class="tile small" data-nav id="ask-ok">✓<span>Connect</span></button>
+      <button class="tile small" data-nav id="ask-cancel">✕<span>Cancel</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="home.js"></script>
+</body>
+</html>

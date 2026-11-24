@@ -1,0 +1,10 @@
+[Unit]
+Description=Migood OS: keep the Migood Games app up to date
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/migood-os/migood-app-update
+Nice=10
+IOSchedulingClass=idle

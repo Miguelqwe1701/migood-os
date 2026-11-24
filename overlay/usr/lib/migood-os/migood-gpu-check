@@ -1,0 +1,54 @@
+#!/bin/bash
+# Runs on every boot, before the login screen (migood-gpu-check.service).
+# Makes the graphics setup match the GPUs that are actually switched on, so a
+# hybrid laptop boots whichever GPU mode its firmware is in (ASUS Eco/iGPU-only
+# mode hides the NVIDIA dGPU completely).
+#
+#   NVIDIA driver installed + NVIDIA GPU present   -> on-demand PRIME (the
+#                                                     iGPU drives the screen,
+#                                                     games can use the dGPU)
+#   NVIDIA driver installed + NVIDIA GPU switched off -> make sure nothing
+#                                                     forces the screen onto it
+#   "nomodeset" on the command line by accident    -> logged (and removed from
+#                                                     GRUB's defaults for next boot)
+# It never blocks boot: every step is best-effort.
+LOG=/var/log/migood-gpu.log
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+has_nvidia_dev=false
+lspci -d 10de: 2>/dev/null | grep -Eqi "vga|3d|display" && has_nvidia_dev=true
+has_nvidia_drv=false
+dpkg-query -W -f='${Status}' 'nvidia-driver-*' 2>/dev/null | grep -q "install ok installed" && has_nvidia_drv=true
+igpu="$(lspci -nn 2>/dev/null | grep -Ei 'vga|display' | grep -Eio '\[(1002|8086):[0-9a-f]{4}\]' | head -1)"
+log "boot: nvidia device=$has_nvidia_dev driver=$has_nvidia_drv igpu=${igpu:-none} cmdline: $(cat /proc/cmdline)"
+
+if $has_nvidia_drv && command -v prime-select >/dev/null; then
+  mode="$(prime-select query 2>/dev/null || true)"
+  if [ -n "$igpu" ] && [ "$mode" = "nvidia" ]; then
+    # "nvidia" mode wires the screen to the dGPU: when the dGPU is off (Eco
+    # mode) the login screen never appears. on-demand works in every mode.
+    log "PRIME was '$mode' on a hybrid laptop: switching to on-demand"
+    prime-select on-demand >> "$LOG" 2>&1 || true
+  fi
+  if ! $has_nvidia_dev && [ -n "$igpu" ]; then
+    # dGPU switched off: an X config pinned to NVIDIA would hang the login screen.
+    for f in /etc/X11/xorg.conf /etc/X11/xorg.conf.d/*nvidia*.conf; do
+      [ -f "$f" ] && grep -qi 'Driver *"nvidia"' "$f" && { log "dGPU is off: moving $f aside"; mv "$f" "$f.migood-off"; }
+    done
+  fi
+fi
+
+# Put back X configs moved aside earlier once the dGPU is on again.
+if $has_nvidia_dev; then
+  for f in /etc/X11/xorg.conf.migood-off /etc/X11/xorg.conf.d/*.migood-off; do
+    [ -f "$f" ] && { log "dGPU is on: restoring ${f%.migood-off}"; mv "$f" "${f%.migood-off}"; }
+  done
+fi
+
+# A leftover "nomodeset" in GRUB's defaults disables the AMD/Intel driver.
+if [ -f /etc/default/grub ] && grep -qw nomodeset /etc/default/grub; then
+  log "removing nomodeset from /etc/default/grub (safe graphics is a GRUB menu choice, not a default)"
+  sed -i 's/\bnomodeset\b//g' /etc/default/grub
+  (update-grub >> "$LOG" 2>&1 &)
+fi
+exit 0

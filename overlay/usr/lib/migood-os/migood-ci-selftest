@@ -1,0 +1,45 @@
+#!/bin/bash
+# Boot self-test for GitHub Actions. Does nothing on a normal PC: it only runs
+# when the kernel command line has "migood.ci=1" (the CI's virtual machine).
+# Checks the things that have broken before, prints one line per check to the
+# serial port, which the CI reads, then powers the VM off:
+#   MIGOOD-CI: PASS <check> | MIGOOD-CI: FAIL <check>: <why> | MIGOOD-CI: DONE pass=N fail=N
+grep -qw "migood.ci=1" /proc/cmdline || exit 0
+OUT=/dev/ttyS0
+pass=0; fail=0
+say() { echo "MIGOOD-CI: $*" | tee -a "$OUT" | systemd-cat -t migood-ci; }
+ok() { pass=$((pass + 1)); say "PASS $1"; }
+bad() { fail=$((fail + 1)); say "FAIL $1: $2"; }
+check() {  # check <name> <command...>: PASS if it exits 0 within 60 s
+  local name="$1"; shift
+  local out
+  if out="$(timeout 60 "$@" 2>&1)"; then ok "$name"; else bad "$name" "$(echo "$out" | tail -3 | tr '\n' ' ')"; fi
+}
+
+USER_NAME="$(getent passwd 1000 | cut -d: -f1)"
+say "start: $(. /etc/os-release; echo "$PRETTY_NAME"), kernel $(uname -r), user ${USER_NAME:-none}"
+
+# 1. The desktop session came up, in Migood Home (wait up to 4 minutes).
+for _ in $(seq 1 48); do pgrep -u "${USER_NAME:-1000}" -f /usr/lib/migood-os/migood-home >/dev/null && break; sleep 5; done
+check "migood-home-running" pgrep -u "${USER_NAME:-1000}" -f /usr/lib/migood-os/migood-home
+U=(runuser -u "${USER_NAME:-nobody}" -- env XDG_RUNTIME_DIR="/run/user/1000" HOME="/home/$USER_NAME")
+
+# 2. Apps can make their sandboxes (AppArmor blocked this: Migood Games, Chromium, Dolphin).
+check "userns-sandbox" "${U[@]}" unshare --user --map-root-user true
+check "bwrap-sandbox" "${U[@]}" bwrap --unshare-user --ro-bind / / true
+# 3. A Flatpak app actually starts inside its sandbox.
+check "flatpak-chromium" "${U[@]}" flatpak run --command=true org.chromium.Chromium
+# 4. Migood Games is there and its sandbox helper is set up.
+check "migood-games-installed" test -x /opt/migood-games/migood-games -a -u /opt/migood-games/chrome-sandbox
+# 5. Name lookups work (the 0.1.1 "can't reach Migood" bug).
+check "dns" getent hosts archive.ubuntu.com
+# 6. The installer is there.
+check "installer" test -x /usr/lib/migood-os/migood-install -a -x /usr/bin/calamares
+# 7. Graphics: the boot check ran.
+check "gpu-check" test -f /var/log/migood-gpu.log
+# Information only: services that failed.
+say "failed units: $(systemctl --failed --no-legend --plain | awk '{print $1}' | tr '\n' ' ')"
+
+say "DONE pass=$pass fail=$fail"
+sleep 2
+systemctl poweroff

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Migood Home: the full-screen home screen Migood OS starts into.
+
+  migood-home              full screen (the Migood Home session)
+  migood-home --window     in a window (to try it from the desktop)
+
+The screen is a web page (/usr/share/migood-home/index.html) shown with
+WebKitGTK. The page sends requests with
+    window.webkit.messageHandlers.migood.postMessage({id, cmd, args})
+and gets answers through window.migood._reply(id, result). Requests go to
+homecore.handle(), which only knows a fixed list of commands, plus "launch"
+here (it needs GTK). Pages from anywhere else can't be loaded in this view.
+"""
+import json
+import os
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import Gio, GLib, Gtk, WebKit  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import homecore  # noqa: E402
+
+UI = os.environ.get("MIGOOD_HOME_UI", "/usr/share/migood-home")
+
+
+class Home(Gtk.ApplicationWindow):
+    def __init__(self, app, windowed):
+        super().__init__(application=app, title="Migood Home", default_width=1280, default_height=800)
+        manager = WebKit.UserContentManager()
+        manager.register_script_message_handler("migood", None)
+        manager.connect("script-message-received::migood", self.on_message)
+        self.view = WebKit.WebView(user_content_manager=manager)
+        settings = self.view.get_settings()
+        settings.set_enable_developer_extras("--debug" in sys.argv)
+        settings.set_allow_file_access_from_file_urls(True)  # app icons are local files
+        settings.set_enable_back_forward_navigation_gestures(False)
+        self.view.connect("decide-policy", self.on_policy)
+        self.view.connect("context-menu", lambda *a: True)  # no "Reload / Inspect" menu
+        self.view.load_uri("file://" + os.path.join(UI, "index.html"))
+        self.set_child(self.view)
+        if not windowed:
+            self.fullscreen()
+
+    def on_policy(self, view, decision, kind):
+        # Only our own page; links to the web open in the browser instead.
+        if kind == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+            uri = decision.get_navigation_action().get_request().get_uri()
+            if not uri.startswith("file://" + UI):
+                if uri.startswith(("https://", "http://")):
+                    Gio.AppInfo.launch_default_for_uri(uri, None)
+                decision.ignore()
+                return True
+        return False
+
+    def on_message(self, manager, value):
+        try:
+            msg = json.loads(value.to_json(0))
+            rid, cmd, args = msg.get("id"), msg.get("cmd"), msg.get("args") or {}
+        except (ValueError, AttributeError):
+            return
+        if cmd == "launch":
+            self.reply(rid, self.launch(args.get("id")))
+            return
+        # Everything else may be slow (nmcli, wpctl): off the UI thread.
+        def work():
+            result = homecore.handle(cmd, args)
+            GLib.idle_add(self.reply, rid, result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def launch(self, app_id):
+        path = homecore.app_path(app_id)
+        if not path:
+            return {"ok": False, "error": "no such app"}
+        info = Gio.DesktopAppInfo.new_from_filename(path)
+        if not info or not info.launch([], None):
+            return {"ok": False, "error": "couldn't start it"}
+        homecore.remember_launch(app_id)
+        return {"ok": True}
+
+    def reply(self, rid, result):
+        js = f"window.migood && window.migood._reply({json.dumps(rid)}, {json.dumps(result)});"
+        self.view.evaluate_javascript(js, -1, None, None, None, None, None)
+        return False
+
+
+class App(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="os.migood.Home", flags=Gio.ApplicationFlags.NON_UNIQUE)
+
+    def do_activate(self):
+        Home(self, windowed="--window" in sys.argv).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run([sys.argv[0]]))

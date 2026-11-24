@@ -22,7 +22,7 @@ if [ ! -s migood-os.iso ]; then
   else
     mv dl/migood-os-*.iso migood-os.iso
   fi
-  ( cd dl && [ -f ./*.sha256 ] && sed "s#  .*#  ../migood-os.iso#" ./*.sha256 | sha256sum -c - ) \
+  ( cd dl && sums=(./*.sha256) && [ -f "${sums[0]}" ] && sed "s#  .*#  ../migood-os.iso#" "${sums[0]}" | sha256sum -c - ) \
     || echo "(no checksum file to check)"
   rm -rf dl
 fi

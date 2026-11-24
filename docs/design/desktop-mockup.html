@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- Stage 2 design previews: three possible Migood OS desktops.
+     Open with ?style=dock|taskbar|rail and &open=none|launcher|quick.
+     Rendered to PNGs by tools/desktop-preview.js. Not part of the OS. -->
+<html><head><meta charset="utf-8"><title>Migood desktop mockup</title>
+<style>
+:root { --text:#f2f5f7; --dim:#8d98a3; --accent:#2ecc71; --glass:rgba(14,18,24,.72); --tile:rgba(255,255,255,.07); }
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; overflow:hidden; font-family:Nunito,sans-serif; color:var(--text); }
+body { background:#0b0f14 url("../../assets/wallpapers/aurora.jpg") center/cover; }
+.glass { background:var(--glass); backdrop-filter:blur(24px) saturate(1.4); border:1px solid rgba(255,255,255,.08); }
+.ico { width:44px; height:44px; border-radius:12px; display:grid; place-items:center; font-size:24px; background:var(--tile); position:relative; }
+.ico.run::after { content:""; position:absolute; bottom:-7px; left:50%; width:6px; height:6px; margin-left:-3px; border-radius:3px; background:var(--accent); }
+.ico.big { width:64px; height:64px; border-radius:18px; font-size:34px; }
+.mg { background:var(--accent); color:#062012; font-weight:900; }
+.mg img { width:30px; height:30px; }
+.status { display:flex; gap:12px; align-items:center; font-weight:800; font-size:14px; }
+.pill { padding:6px 12px; border-radius:999px; background:var(--tile); }
+.clock { font-weight:900; font-size:16px; }
+/* a window */
+.win { position:absolute; border-radius:18px; overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.5); background:#11161d; border:1px solid rgba(255,255,255,.08); }
+.win .title { height:44px; display:flex; align-items:center; padding:0 16px; gap:10px; font-weight:800; background:#161c24; }
+.win .title .dots { margin-left:auto; display:flex; gap:8px; }
+.win .title .dots span { width:14px; height:14px; border-radius:7px; background:#2a323d; }
+.win .title .dots span:last-child { background:#e5484d; }
+.win .body { padding:24px; color:var(--dim); }
+.page-card { height:120px; border-radius:14px; background:var(--tile); margin-bottom:14px; }
+/* launcher */
+.launcher { position:absolute; border-radius:28px; padding:26px; }
+.search { height:52px; border-radius:16px; background:var(--tile); display:flex; align-items:center; padding:0 18px; color:var(--dim); font-weight:700; margin-bottom:20px; }
+.search b { color:var(--text); margin-right:10px; }
+.lgrid { display:grid; grid-template-columns:repeat(6,1fr); gap:18px 10px; }
+.app { display:flex; flex-direction:column; align-items:center; gap:8px; font-size:13px; font-weight:700; }
+.app.sel .ico { box-shadow:0 0 0 3px var(--accent); }
+.section { font-size:13px; text-transform:uppercase; letter-spacing:1.2px; font-weight:900; color:var(--dim); margin:18px 0 12px; }
+/* quick settings */
+.qs { position:absolute; width:380px; border-radius:26px; padding:20px; }
+.qgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+.q { border-radius:16px; padding:14px; background:var(--tile); font-weight:800; font-size:14px; }
+.q.on { background:var(--accent); color:#062012; }
+.q small { display:block; font-weight:700; opacity:.75; margin-top:2px; }
+.slider { height:44px; border-radius:22px; background:var(--tile); margin-bottom:10px; position:relative; overflow:hidden; display:flex; align-items:center; padding:0 16px; font-weight:800; }
+.slider i { position:absolute; inset:0 auto 0 0; background:rgba(46,204,113,.35); }
+.slider span { position:relative; }
+.qrow { display:flex; gap:10px; justify-content:space-between; align-items:center; margin-top:6px; }
+.me { display:flex; align-items:center; gap:10px; font-weight:900; }
+.me i { width:36px; height:36px; border-radius:50%; background:var(--accent); display:grid; place-items:center; font-style:normal; color:#062012; }
+/* ---- style A: floating dock + slim top bar ---- */
+.dock { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); display:flex; gap:12px; padding:10px 14px; border-radius:24px; align-items:center; }
+.topbar { position:absolute; top:0; left:0; right:0; height:40px; display:flex; align-items:center; padding:0 18px; gap:14px; background:rgba(8,10,14,.55); backdrop-filter:blur(18px); }
+.sep { width:1px; height:30px; background:rgba(255,255,255,.12); }
+/* ---- style B: taskbar ---- */
+.taskbar { position:absolute; left:0; right:0; bottom:0; height:64px; display:flex; align-items:center; padding:0 16px; gap:10px; border-radius:0; border-left:0; border-right:0; border-bottom:0; }
+.taskbar .tray { margin-left:auto; }
+.taskbar .ico { width:46px; height:46px; }
+.taskbar .ico.run::after { bottom:-6px; width:18px; margin-left:-9px; height:4px; border-radius:2px; }
+/* ---- style C: side rail ---- */
+.rail { position:absolute; top:16px; bottom:16px; left:16px; width:76px; border-radius:26px; display:flex; flex-direction:column; align-items:center; padding:14px 0; gap:12px; }
+.rail .bottom { margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:10px; font-weight:900; font-size:13px; }
+.rail .ico.run::after { left:-12px; top:50%; bottom:auto; margin:-9px 0 0; width:4px; height:18px; border-radius:2px; }
+</style></head>
+<body>
+<div id="root"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const style = q.get("style") || "dock", open = q.get("open") || "none";
+const LOGO = '<img src="../../overlay/usr/share/migood-home/logo.png">';
+const pinned = [["🎮","Migood Games",1],["🌐","Browser",1],["📁","Files"],["🕹","Steam"],["✨","Migood AI"],["⚙","Settings"]];
+const ico = ([e,, run], big) => `<div class="ico ${big ? "big" : ""} ${run ? "run" : ""}">${e}</div>`;
+const status = `<div class="status"><span class="pill">📶 Home Wi-Fi</span><span class="pill">🔊</span><span class="pill">🔋 82%</span><span class="clock">9:48 PM</span></div>`;
+const win = (x, y, w, h) => `<div class="win" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">
+  <div class="title">🌐 Migood Games — Plaza<div class="dots"><span></span><span></span><span></span></div></div>
+  <div class="body"><div class="page-card" style="height:180px;background:linear-gradient(120deg,#123a26,#0d1b2a)"></div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">${"<div class='page-card'></div>".repeat(4)}</div></div></div>`;
+const apps = [["🎮","Migood Games"],["🌐","Browser"],["🕹","Steam"],["🐬","Dolphin"],["🎯","PPSSPP"],["👾","RetroArch"],["✨","Migood AI"],["📁","Files"],["📝","Text Editor"],["🧮","Calculator"],["📷","Camera"],["⚙","Settings"]];
+const launcher = (css) => `<div class="launcher glass" style="${css}">
+  <div class="search"><b>🔍</b>Search apps, games and the web…</div>
+  <div class="section">Pinned</div>
+  <div class="lgrid">${apps.slice(0, 6).map(([e,n], i) => `<div class="app ${i === 0 ? "sel" : ""}"><div class="ico big">${e}</div>${n}</div>`).join("")}</div>
+  <div class="section">All apps</div>
+  <div class="lgrid">${apps.slice(6).map(([e,n]) => `<div class="app"><div class="ico big">${e}</div>${n}</div>`).join("")}</div>
+  <div class="qrow" style="margin-top:22px"><div class="me"><i>M</i>Miguel</div><div class="status"><span class="pill">🏠 Migood Home</span><span class="pill">⏻</span></div></div></div>`;
+const quick = (css) => `<div class="qs glass" style="${css}">
+  <div class="qgrid"><div class="q on">📶 Wi-Fi<small>Home Wi-Fi</small></div><div class="q on">🔵 Bluetooth<small>Controller</small></div>
+  <div class="q">🌙 Night light<small>Off</small></div><div class="q">🎮 Game mode<small>Off</small></div></div>
+  <div class="slider"><i style="width:60%"></i><span>🔊 Volume</span></div>
+  <div class="slider"><i style="width:75%"></i><span>☀ Brightness</span></div>
+  <div class="qrow"><div class="me"><i>M</i>Miguel</div><div class="status"><span class="pill">🔋 82%</span><span class="pill">⚙</span><span class="pill">⏻</span></div></div></div>`;
+let html = "";
+if (style === "dock") {
+  html = `<div class="topbar"><b style="font-weight:900">Migood OS</b><span style="color:var(--dim);font-weight:700">Migood Games</span><div style="margin-left:auto">${status}</div></div>`
+    + win(240, 90, 1120, 640)
+    + `<div class="dock glass"><div class="ico mg">${LOGO}</div><div class="sep"></div>${pinned.map((p) => ico(p)).join("")}<div class="sep"></div><div class="ico">🏠</div></div>`;
+  if (open === "launcher") html += launcher("left:50%;top:50%;transform:translate(-50%,-54%);width:780px");
+  if (open === "quick") html += quick("right:14px;top:52px");
+} else if (style === "taskbar") {
+  html = win(180, 60, 1240, 690)
+    + `<div class="taskbar glass"><div class="ico mg">${LOGO}</div>${pinned.map((p) => ico(p)).join("")}<div class="tray">${status}</div></div>`;
+  if (open === "launcher") html += launcher("left:14px;bottom:78px;width:700px");
+  if (open === "quick") html += quick("right:14px;bottom:78px");
+} else {
+  html = win(150, 40, 1300, 720)
+    + `<div class="rail glass"><div class="ico mg">${LOGO}</div><div class="ico">🏠</div>${pinned.map((p) => ico(p)).join("")}
+       <div class="bottom"><span>📶</span><span>🔋</span><span>9:48</span><div class="me"><i>M</i></div></div></div>`;
+  if (open === "launcher") html += launcher("left:108px;top:16px;bottom:16px;width:720px");
+  if (open === "quick") html += quick("left:108px;bottom:16px");
+}
+document.getElementById("root").innerHTML = html;
+</script></body></html>

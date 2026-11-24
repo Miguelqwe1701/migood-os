@@ -125,6 +125,23 @@ try_install calamares calamares-settings-ubuntu-common grub-efi-amd64-signed shi
   ubuntu-drivers-common pciutils
 # Quiet fans: the "Power Mode" service the fan controller (migood-fan) talks to.
 try_install power-profiles-daemon
+# Graphics: the HWE kernel (newer AMD/Intel GPU support; the live USB boots it
+# too, the build picks the newest kernel), firmware, CPU microcode, GPU tools.
+# Migood Home (the full-screen home screen session): WebKitGTK for the screen,
+# a kiosk window manager, and a password prompt for admin apps outside GNOME.
+try_install gir1.2-webkit-6.0 matchbox-window-manager mate-polkit x11-xserver-utils gnome-keyring
+try_install linux-generic-hwe-24.04 linux-firmware amd64-microcode intel-microcode \
+  pciutils mesa-vulkan-drivers mesa-utils ubuntu-drivers-common
+# With the HWE kernel in, the older 24.04 kernel is just ~400 MB of dead
+# weight (the live USB and installs boot the newest one), so remove it.
+if dpkg -s linux-generic-hwe-24.04 >/dev/null 2>&1; then
+  newest="$(ls /boot/vmlinuz-* | sort -V | tail -1 | sed 's#.*/vmlinuz-##; s#-generic$##')"
+  old_kernels="$(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 'linux-modules-[0-9]*' \
+    'linux-modules-extra-[0-9]*' 'linux-headers-[0-9]*' 2>/dev/null | grep -v -- "$newest" || true)"
+  # shellcheck disable=SC2086  # one word per package
+  apt-get purge -y linux-generic linux-image-generic linux-headers-generic $old_kernels \
+    || warn "old kernel not removed"
+fi
 if [ -f /etc/default/zramswap ]; then
   sed -i 's/^#\?ALGO=.*/ALGO=zstd/; s/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap
 fi
@@ -175,7 +192,13 @@ say "7/10 Migood files (updater, theme defaults, services)"
 cp -r "$REPO/overlay/." /
 chmod 755 /usr/lib/migood-os/update /usr/lib/migood-os/migood-sleepd /usr/bin/migood-cli \
   /usr/lib/systemd/system-sleep/migood /usr/lib/migood-os/migood-install /usr/lib/migood-os/migood-fan \
-  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers
+  /usr/lib/migood-os/migood-graphics-setup /usr/lib/migood-os/migood-drivers /usr/lib/migood-os/migood-gpu-check \
+  /usr/lib/migood-os/migood-home /usr/lib/migood-os/migood-home-session /usr/lib/migood-os/migood-switch \
+  /usr/lib/migood-os/migood-ci-selftest
+# The live USB's user ("migood", made by casper at boot) starts in Migood Home.
+install -d /var/lib/AccountsService/users
+printf '[User]\nSession=migood-home\nXSession=migood-home\nSystemAccount=false\n' \
+  > /var/lib/AccountsService/users/migood
 [ -f /etc/sudoers.d/migood-os ] && chmod 440 /etc/sudoers.d/migood-os
 sed -i "s/org.chromium.Chromium.desktop/$BROWSER_DESKTOP/" /etc/dconf/db/local.d/00-migood
 install -d -m 700 /var/lib/migood-os
@@ -196,7 +219,8 @@ rm -f /usr/share/applications/calamares.desktop
 install -d -m 755 /var/cache/migood-os
 dconf update
 systemctl enable migood-os-update.timer migood-os-apply.service migood-firstboot.service \
-  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service
+  migood-battery-limit.service migood-sleepd.service migood-fan.service migood-drivers.service migood-gpu-check.service \
+  migood-ci-selftest.service migood-app-update.timer migood-app-update-apply.service
 cp "$ASSETS/migood-logo.png" /usr/share/migood-os/ 2>/dev/null || true
 # Overlay schema overrides (e.g. the login screen's Migood logo) take effect
 # only once compiled.
@@ -279,57 +303,25 @@ else
 fi
 
 say "10/10 Migood Games desktop app"
+# Installed the same way PCs update it later (migood-app-update): unpack, swap
+# folders, then chrome-sandbox, AppArmor profile, launcher, migood:// links and
+# autostart in the tray. Installed PCs get new app versions from the
+# migood-app-update timer; the app's own updater only works on Windows.
+chmod 755 /usr/lib/migood-os/migood-app-update
 APP_TGZ="$(ls "$ASSETS"/migood-games-*.tar.gz 2>/dev/null | sort -V | tail -1 || true)"
 if [ -n "$APP_TGZ" ]; then
-  rm -rf /opt/migood-games && install -d /opt/migood-games
-  tar -xzf "$APP_TGZ" -C /opt/migood-games --strip-components=1
-  # e.g. migood-games-3.9.1.tar.gz -> 3.9.1 (release notes, Settings -> About).
-  basename "$APP_TGZ" .tar.gz | sed 's/^migood-games-//' > /usr/share/migood-os/migood-games.version
-  BIN="$(find /opt/migood-games -maxdepth 1 -type f -executable -name 'migood*' | head -1)"
-  # Electron's sandbox helper must be owned by root with the setuid bit.
-  [ -f /opt/migood-games/chrome-sandbox ] && chown root:root /opt/migood-games/chrome-sandbox \
-    && chmod 4755 /opt/migood-games/chrome-sandbox
-  cat > /usr/share/applications/migood-games.desktop <<EOF
-[Desktop Entry]
-Name=Migood Games
-Exec=$BIN %U
-Icon=/usr/share/migood-os/migood-launcher.png
-Type=Application
-Categories=Game;
-EOF
-  install -d /etc/xdg/autostart
-  cp /usr/share/applications/migood-games.desktop /etc/xdg/autostart/
+  /usr/lib/migood-os/migood-app-update --install-tarball "$APP_TGZ" \
+    || warn "Migood Games didn't install"
 elif [ -d /opt/migood-games ]; then
   # Download failed (e.g. the Migood server was down), but this image was made
   # from an earlier Migood OS that already has the app: keep that copy.
   warn "no new Migood Games app downloaded; kept the one already in the image"
+  /usr/lib/migood-os/migood-app-update --refresh || true
 else
   warn "no assets/migood-games-*.tar.gz, desktop app not installed"
 fi
-if [ -f /opt/migood-games/resources/app.asar ]; then
-  /usr/lib/migood-os/migood-sleepd --patch-app || warn "could not patch Migood Games sleep auth"
-fi
-# The app's AppArmor profile, for a freshly downloaded app or a kept one.
-BIN="$(find /opt/migood-games -maxdepth 1 -type f -executable -name 'migood*' 2>/dev/null | head -1)"
-if [ -n "$BIN" ]; then
-  # Ubuntu 24.04 blocks the sandbox Electron apps use (unprivileged user
-  # namespaces) unless the app has an AppArmor profile that allows it; without
-  # one the app crashed at start (SIGTRAP). Same profile Ubuntu ships for
-  # VS Code, Slack and Discord: no limits, it just allows "userns".
-  cat > /etc/apparmor.d/migood-games <<EOF
-# Lets Migood Games use its sandbox on Ubuntu 24.04 (see customize.sh).
-abi <abi/4.0>,
-include <tunables/global>
-
-profile migood-games $BIN flags=(unconfined) {
-  userns,
-
-  include if exists <local/migood-games>
-}
-EOF
-  apparmor_parser -Q -K /etc/apparmor.d/migood-games 2>/dev/null \
-    || warn "AppArmor profile for Migood Games didn't parse"
-fi
+# (No more patching the app's code: Migood Games 3.14+ does sleep sign-in,
+# screen sharing and Remote Play input itself.)
 
 apt-get autoremove -y >/dev/null && apt-get clean
 

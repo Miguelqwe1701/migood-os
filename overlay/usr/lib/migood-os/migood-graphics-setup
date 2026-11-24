@@ -2,12 +2,13 @@
 # Configures graphics drivers and boot options for gaming laptops and PCs.
 set -e
 
-# 1. Propagate Safe Graphics (nomodeset) if installer was booted with it
-if grep -qw "nomodeset" /proc/cmdline 2>/dev/null; then
-  echo "migood-graphics: Safe Graphics mode active during installation"
-  if [ -f /etc/default/grub ] && ! grep -qw "nomodeset" /etc/default/grub; then
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nomodeset"/' /etc/default/grub
-  fi
+# 1. Never keep "nomodeset" on the installed system. ("Safe graphics" on the USB
+# stick used to be copied here, which switched the AMD/Intel graphics driver off
+# for good: hybrid AMD+NVIDIA laptops then froze on the boot screen unless the
+# NVIDIA dGPU was on.) Safe graphics stays a one-time choice in the GRUB menu.
+if [ -f /etc/default/grub ] && grep -qw "nomodeset" /etc/default/grub; then
+  echo "migood-graphics: removing nomodeset from the installed system"
+  sed -i 's/\bnomodeset\b//g' /etc/default/grub
 fi
 
 # 2. Gaming laptops / NVIDIA GPUs: disable buggy nouveau KMS

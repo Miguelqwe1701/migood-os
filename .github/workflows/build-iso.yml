@@ -43,7 +43,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: ["overlay/**", "tests/**"]
+    paths: ["overlay/**", "tests/**", "cubic/**", "build/**", "tools/**", "bundles/**", "vm/**", ".github/**"]
 
 permissions:
   contents: write  # needed to create releases
@@ -55,8 +55,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # all history + tags: the update bundle compares versions
-      - name: Updater tests
+      - name: Unit tests
         run: python3 -m unittest discover tests -v
+      - name: Lint (shellcheck errors, pyflakes)
+        run: |
+          pip install -q pyflakes shellcheck-py
+          # Every shell and Python script in the repo, found by its #! line.
+          mapfile -t SH < <(git ls-files | while read -r f; do [ -f "$f" ] && head -1 "$f" | grep -qE '^#!.*(bash|/sh)' && echo "$f"; done)
+          mapfile -t PY < <( (git ls-files '*.py'; git ls-files | while read -r f; do [ -f "$f" ] && head -1 "$f" | grep -q '^#!.*python' && echo "$f"; done) | sort -u)
+          shellcheck -S error "${SH[@]}"
+          python3 -m pyflakes "${PY[@]}"
+          node -e "for (const f of process.argv.slice(1)) new Function(require('fs').readFileSync(f, 'utf8'))" overlay/usr/share/migood-home/*.js
       - name: Script syntax
         run: |
           bash -n cubic/customize.sh && bash -n build/build-iso.sh
@@ -171,6 +180,38 @@ jobs:
 
       - name: Check the new ISO (every file in it must read back)
         run: sudo bash build/check-iso.sh "out/migood-os-$VERSION.iso"
+
+      # Boots the new ISO in a VM. migood-ci-selftest (inside Migood OS, only
+      # with migood.ci=1) checks Migood Home, app sandboxes, Flatpak, DNS and the
+      # installer, prints PASS/FAIL to the serial port and powers off.
+      # A FAIL stops the release.
+      - name: Boot test in a VM
+        timeout-minutes: 30
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::warning title=Boot test::no KVM on this runner, boot test skipped"; exit 0
+          fi
+          sudo apt-get install -y -q qemu-system-x86 >/dev/null
+          sudo chmod 666 /dev/kvm
+          ISO="out/migood-os-$VERSION.iso"
+          xorriso -osirrox on -indev "$ISO" -extract /casper/vmlinuz vmlinuz -extract /casper/initrd initrd >/dev/null 2>&1
+          timeout 25m qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -smp 2 \
+            -cdrom "$ISO" -kernel vmlinuz -initrd initrd \
+            -append "boot=casper migood.ci=1 console=tty0 console=ttyS0,115200" \
+            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std \
+            -display none -serial file:serial.log -no-reboot || true
+          echo "---- self-test ----"; grep "MIGOOD-CI:" serial.log || true
+          grep -q "MIGOOD-CI: DONE" serial.log || { echo "::error title=Boot test::the self-test never finished (see serial.log)"; exit 1; }
+          if grep -q "MIGOOD-CI: FAIL" serial.log; then
+            grep "MIGOOD-CI: FAIL" serial.log | sed 's/^/::error title=Boot test::/'; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-test-serial-log
+          path: serial.log
+          if-no-files-found: ignore
 
       - name: Update bundle (for PCs already running the previous version)
         env:

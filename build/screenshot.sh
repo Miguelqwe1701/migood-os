@@ -107,7 +107,7 @@ shot 2-launcher
 key Escape
 sleep 3
 
-click $((W - 40)) 14             # status icons, top-right of the top bar
+click $((W - 221)) $((H - 32))   # status icons, left of the clock in the taskbar
 sleep 8
 shot 3-quick-settings
 key Escape

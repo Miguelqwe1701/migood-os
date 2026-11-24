@@ -1,18 +1,35 @@
-/* Migood OS top bar: see-through over the wallpaper, like a Googlebook. */
-#panel.migood-panel {
-  background-color: transparent;
+/* Migood OS look, matching Migood Home: dark glass, round corners, green. */
+.migood #panel, .migood .dashtopanelMainPanel {
   font-family: Nunito, sans-serif;
-  font-weight: 600;
-}
-#panel.migood-panel .panel-button {
-  border-radius: 999px;
+  font-weight: 700;
 }
 
-/* Popups (calendar, Quick Settings): big rounded corners, Migood dark. */
-.quick-settings, .datemenu-popover, .popup-menu-content {
-  border-radius: 24px;
+/* Clock and status icons in the taskbar: soft "pills". */
+.migood .dashtopanelMainPanel .panel-button {
+  border-radius: 14px;
+  margin: 8px 2px;
+  padding: 0 12px;
 }
-.quick-toggle:checked, .quick-menu-toggle .quick-toggle:checked {
+.migood .dashtopanelMainPanel .panel-button:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.migood .dashtopanelMainPanel .clock {
+  font-weight: 800;
+}
+
+/* Popups (calendar, Quick Settings, menus): big rounded corners, Migood dark. */
+.migood .quick-settings, .migood .datemenu-popover, .migood .popup-menu-content {
+  background-color: rgba(14, 18, 24, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 26px;
+}
+.migood .quick-toggle {
+  border-radius: 16px;
+}
+.migood .quick-toggle:checked, .migood .quick-menu-toggle .quick-toggle:checked {
   background-color: #2ecc71;
-  color: #0a0d12;
+  color: #062012;
+}
+.migood .quick-settings .slider {
+  -barlevel-active-background-color: #2ecc71;
 }
