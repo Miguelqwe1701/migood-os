@@ -76,18 +76,17 @@ focus-highlight=true
 focus-highlight-color='#2ecc71'
 focus-highlight-opacity=18
 show-activities-button=false
-show-showdesktop-button=false
 group-apps=true
 isolate-workspaces=false
 show-window-previews=true
 panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
 
 # Launcher: ArcMenu, opened by the Migood button (assets/migood-button.svg,
-# "bunny ears" design picked by the owner) or the Super key. The "eleven"
+# "bunny ears" design picked by the owner) or the Super key. The "11"
 # layout pops up above the button: search, pinned apps grid, all apps, and
-# the user + power buttons at the bottom, like the mockup.
+# the user + power buttons at the bottom, like the mockup (layout id '11').
 [org/gnome/shell/extensions/arcmenu]
-menu-layout='eleven'
+menu-layout='11'
 position-in-panel='Left'
 menu-button-appearance='Icon'
 menu-button-icon='/usr/share/migood-os/migood-button.svg'
