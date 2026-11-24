@@ -7,7 +7,7 @@
 [org/gnome/shell]
 enabled-extensions=['migood-shell@migood.os', 'dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'gsconnect@andyholmes.github.io']
 disabled-extensions=['ubuntu-dock@ubuntu.com', 'ding@rastersoft.com']
-favorite-apps=['migood-install.desktop', 'migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop']
+favorite-apps=['migood-install.desktop', 'migood-games.desktop', 'org.chromium.Chromium.desktop', 'org.gnome.Nautilus.desktop', 'steam.desktop', 'org.gnome.Settings.desktop', 'migood-home.desktop']
 
 [org/gnome/desktop/interface]
 color-scheme='prefer-dark'
@@ -42,41 +42,69 @@ idle-dim=false
 [org/gnome/desktop/wm/preferences]
 button-layout='appmenu:minimize,maximize,close'
 
-# Dock (Googlebook style): Dash to Panel in "dock mode": a short, floating,
-# rounded bar in the middle of the bottom edge. Migood button (ArcMenu) first,
-# then the apps. Clock and status icons live in the top bar instead
-# (GNOME's own, kept by stockgs-keep-top-panel; see migood-shell).
+# Taskbar (stage 2, layout "B" picked by the owner; mockup in
+# docs/design/desktop-mockup.html?style=taskbar): Dash to Panel as one
+# full-width bar along the bottom. Left: the Migood button (ArcMenu), then the
+# pinned and open apps. Right: Wi-Fi/sound/battery (Quick Settings) and the
+# clock. GNOME's own top bar is hidden; its pieces live in this bar.
 [org/gnome/shell/extensions/dash-to-panel]
 panel-positions='{"0":"BOTTOM"}'
-panel-lengths='{"0":-1}'
-panel-anchors='{"0":"MIDDLE"}'
-panel-sizes='{"0":56}'
-panel-top-bottom-margins=10
-panel-side-margins=10
-panel-side-padding=8
-global-border-radius=5
-stockgs-keep-top-panel=true
+panel-lengths='{"0":100}'
+panel-anchors='{"0":"START"}'
+panel-sizes='{"0":64}'
+panel-top-bottom-margins=0
+panel-side-margins=0
+panel-side-padding=12
+global-border-radius=0
+stockgs-keep-top-panel=false
 appicon-margin=4
-appicon-padding=8
+appicon-padding=10
 trans-use-custom-bg=true
-trans-bg-color='#0a0d12'
+trans-bg-color='#0e1218'
 trans-use-custom-opacity=true
-trans-panel-opacity=0.85
-dot-style-focused='DOTS'
-dot-style-unfocused='DOTS'
+trans-panel-opacity=0.82
+dot-style-focused='METRO'
+dot-style-unfocused='DASHES'
 dot-position='BOTTOM'
+dot-size=3
 dot-color-override=true
 dot-color-1='#2ecc71'
+dot-color-2='#2ecc71'
+dot-color-3='#2ecc71'
+dot-color-4='#2ecc71'
+focus-highlight=true
+focus-highlight-color='#2ecc71'
+focus-highlight-opacity=18
 show-activities-button=false
-panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":false,"position":"stackedBR"},{"element":"dateMenu","visible":false,"position":"stackedBR"},{"element":"systemMenu","visible":false,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
+show-showdesktop-button=false
+group-apps=true
+isolate-workspaces=false
+show-window-previews=true
+panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":false,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":false,"position":"stackedBR"}]}'
 
 # Launcher: ArcMenu, opened by the Migood button (assets/migood-button.svg,
-# "bunny ears" design picked by the owner; options in docs/design/).
+# "bunny ears" design picked by the owner) or the Super key. The "eleven"
+# layout pops up above the button: search, pinned apps grid, all apps, and
+# the user + power buttons at the bottom, like the mockup.
 [org/gnome/shell/extensions/arcmenu]
-menu-layout='chromebook'
+menu-layout='eleven'
+position-in-panel='Left'
 menu-button-appearance='Icon'
 menu-button-icon='/usr/share/migood-os/migood-button.svg'
-menu-button-icon-size=34
+menu-button-icon-size=36
+menu-height=640
+menu-width-adjustment=0
+override-menu-theme=true
+menu-background-color='rgba(14,18,24,0.94)'
+menu-foreground-color='rgb(242,245,247)'
+menu-border-color='rgba(255,255,255,0.08)'
+menu-border-width=1
+menu-border-radius=24
+menu-item-hover-bg-color='rgba(46,204,113,0.22)'
+menu-item-hover-fg-color='rgb(242,245,247)'
+menu-item-active-bg-color='rgb(46,204,113)'
+menu-item-active-fg-color='rgb(6,32,18)'
+menu-separator-color='rgba(255,255,255,0.08)'
 
 # Desktop icons (only switched on in the live USB session, for the
 # "Install Migood OS" icon; see welcome-autostart). No Home/Trash/drives.
